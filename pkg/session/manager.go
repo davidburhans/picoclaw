@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -266,6 +267,7 @@ func (sm *SessionManager) loadSessions() error {
 }
 
 func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
+	logger.InfoCF("session", "RenameSession called", map[string]interface{}{"old": oldKey, "new": newKey})
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -275,16 +277,19 @@ func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
 
 	// Validate keys - they shouldn't contain directory separators
 	if newKey == "" || strings.ContainsAny(newKey, `/\`) {
+		logger.WarnCF("session", "RenameSession: invalid newKey", map[string]interface{}{"key": newKey})
 		return os.ErrInvalid
 	}
 
 	session, ok := sm.sessions[oldKey]
 	if !ok {
+		logger.WarnCF("session", "RenameSession: oldKey not found in memory", map[string]interface{}{"key": oldKey})
 		return nil // Session not loaded or doesn't exist in memory
 	}
 
 	// Check if target already exists
 	if _, exists := sm.sessions[newKey]; exists {
+		logger.WarnCF("session", "RenameSession: target already exists", map[string]interface{}{"key": newKey})
 		return os.ErrExist
 	}
 
@@ -295,7 +300,9 @@ func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
 	oldPath := filepath.Join(sm.storage, oldFilename+".json")
 	newPath := filepath.Join(sm.storage, newFilename+".json")
 	
+	logger.InfoCF("session", "RenameSession: physical rename", map[string]interface{}{"oldPath": oldPath, "newPath": newPath})
 	if err := os.Rename(oldPath, newPath); err != nil {
+		logger.WarnCF("session", "RenameSession: physical rename failed", map[string]interface{}{"error": err})
 		return err
 	}
 
