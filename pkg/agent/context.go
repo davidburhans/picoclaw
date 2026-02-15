@@ -16,6 +16,7 @@ import (
 
 type ContextBuilder struct {
 	workspace    string
+	agentName    string
 	skillsLoader *skills.SkillsLoader
 	memory       *MemoryStore
 	tools        *tools.ToolRegistry // Direct reference to tool registry
@@ -29,17 +30,23 @@ func getGlobalConfigDir() string {
 	return filepath.Join(home, ".picoclaw")
 }
 
-func NewContextBuilder(workspace string) *ContextBuilder {
+func NewContextBuilder(workspace, agentName string) *ContextBuilder {
 	// builtin skills: skills directory in current project
 	// Use the skills/ directory under the current working directory
 	wd, _ := os.Getwd()
 	builtinSkillsDir := filepath.Join(wd, "skills")
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
 
+	name := agentName
+	if name == "" {
+		name = "picoclaw"
+	}
+
 	return &ContextBuilder{
 		workspace:    workspace,
 		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
 		memory:       NewMemoryStore(workspace),
+		agentName:    name,
 	}
 }
 
@@ -56,9 +63,9 @@ func (cb *ContextBuilder) getIdentity() string {
 	// Build tools section dynamically
 	toolsSection := cb.buildToolsSection()
 
-	return fmt.Sprintf(`# picoclaw 🦞
+	return fmt.Sprintf(`# %s 🦞
 
-You are picoclaw, a helpful AI assistant.
+You are %s, a helpful AI assistant.
 
 ## Current Time
 %s
@@ -74,6 +81,10 @@ Your workspace is at: %s
 
 %s
 
+## Chat Commands
+You can suggest these commands to the user when appropriate:
+- **!new [name]**: Start a new chat session and archive the current one. Useful when context is full or starting a new topic. You can reference old sessions using the **read_session** tool.
+
 ## Important Rules
 
 1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
@@ -81,7 +92,7 @@ Your workspace is at: %s
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
 3. **Memory** - When remembering something, write to %s/memory/MEMORY.md`,
-		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+		cb.agentName, cb.agentName, now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {

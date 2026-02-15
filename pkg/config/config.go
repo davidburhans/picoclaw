@@ -59,6 +59,7 @@ type AgentsConfig struct {
 }
 
 type AgentDefaults struct {
+	Name                string  `json:"name" env:"PICOCLAW_AGENTS_DEFAULTS_NAME"`
 	Workspace           string  `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
 	RestrictToWorkspace bool    `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	Provider            string  `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
@@ -205,9 +206,16 @@ type DuckDuckGoConfig struct {
 	MaxResults int  `json:"max_results" env:"PICOCLAW_TOOLS_WEB_DUCKDUCKGO_MAX_RESULTS"`
 }
 
+type SearXNGConfig struct {
+	Enabled    bool   `json:"enabled" env:"PICOCLAW_TOOLS_WEB_SEARXNG_ENABLED"`
+	BaseURL    string `json:"base_url" env:"PICOCLAW_TOOLS_WEB_SEARXNG_BASE_URL"`
+	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_SEARXNG_MAX_RESULTS"`
+}
+
 type WebToolsConfig struct {
 	Brave      BraveConfig      `json:"brave"`
 	DuckDuckGo DuckDuckGoConfig `json:"duckduckgo"`
+	SearXNG    SearXNGConfig    `json:"searxng"`
 }
 
 type ToolsConfig struct {
@@ -218,6 +226,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
+				Name:                "picoclaw",
 				Workspace:           "~/.picoclaw/workspace",
 				RestrictToWorkspace: true,
 				Provider:            "",
@@ -318,6 +327,11 @@ func DefaultConfig() *Config {
 				},
 				DuckDuckGo: DuckDuckGoConfig{
 					Enabled:    true,
+					MaxResults: 5,
+				},
+				SearXNG: SearXNGConfig{
+					Enabled:    false,
+					BaseURL:    "http://sherwood.local:8080/",
 					MaxResults: 5,
 				},
 			},

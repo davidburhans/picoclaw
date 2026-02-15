@@ -235,9 +235,9 @@ func onboard() {
 	}
 
 	workspace := cfg.WorkspacePath()
-	createWorkspaceTemplates(workspace)
+	createWorkspaceTemplates(workspace, cfg.Agents.Defaults.Name)
 
-	fmt.Printf("%s picoclaw is ready!\n", logo)
+	fmt.Printf("%s %s is ready!\n", logo, cfg.Agents.Defaults.Name)
 	fmt.Println("\nNext steps:")
 	fmt.Println("  1. Add your API key to", configPath)
 	fmt.Println("     Get one at: https://openrouter.ai/keys")
@@ -275,6 +275,11 @@ func copyEmbeddedToTarget(targetDir string) error {
 		// Build target file path
 		targetPath := filepath.Join(targetDir, new_path)
 
+		// Start with safe copy: do not overwrite existing files
+		if _, err := os.Stat(targetPath); err == nil {
+			return nil
+		}
+
 		// Ensure target file's directory exists
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 			return fmt.Errorf("Failed to create directory %s: %w", filepath.Dir(targetPath), err)
@@ -291,7 +296,170 @@ func copyEmbeddedToTarget(targetDir string) error {
 	return err
 }
 
-func createWorkspaceTemplates(workspace string) {
+func createWorkspaceTemplates(workspace, agentName string) {
+	if agentName == "" {
+		agentName = "picoclaw"
+	}
+
+	// 1. Create dynamic templates first (preserves custom agent name feature)
+	templates := map[string]string{
+		"AGENTS.md": `# Agent Instructions
+
+You are a helpful AI assistant. Be concise, accurate, and friendly.
+
+## Guidelines
+
+- Always explain what you're doing before taking actions
+- Ask for clarification when request is ambiguous
+- Use tools to help accomplish tasks
+- Remember important information in your memory files
+- Be proactive and helpful
+- Learn from user feedback
+`,
+		"SOUL.md": fmt.Sprintf(`# Soul
+
+I am %s, a lightweight AI assistant powered by AI.
+
+## Personality
+
+- Helpful and friendly
+- Concise and to the point
+- Curious and eager to learn
+- Honest and transparent
+
+## Values
+
+- Accuracy over speed
+- User privacy and safety
+- Transparency in actions
+- Continuous improvement
+`, agentName),
+		"USER.md": `# User
+
+Information about user goes here.
+
+## Preferences
+
+- Communication style: (casual/formal)
+- Timezone: (your timezone)
+- Language: (your preferred language)
+
+## Personal Information
+
+- Name: (optional)
+- Location: (optional)
+- Occupation: (optional)
+
+## Learning Goals
+
+- What the user wants to learn from AI
+- Preferred interaction style
+- Areas of interest
+`,
+		"IDENTITY.md": fmt.Sprintf(`# Identity
+
+## Name
+%s 🦞
+
+## Description
+Ultra-lightweight personal AI assistant written in Go, inspired by nanobot.
+
+## Version
+0.1.0
+
+## Purpose
+- Provide intelligent AI assistance with minimal resource usage
+- Support multiple LLM providers (OpenAI, Anthropic, Zhipu, etc.)
+- Enable easy customization through skills system
+- Run on minimal hardware ($10 boards, <1MB RAM)
+
+## Capabilities
+
+- Web search and content fetching
+- File system operations (read, write, edit)
+- Shell command execution
+- Multi-channel messaging (Telegram, WhatsApp, Feishu)
+- Skill-based extensibility
+- Memory and context management
+
+## Philosophy
+
+- Simplicity over complexity
+- Performance over features
+- User control and privacy
+- Transparent operation
+- Community-driven development
+
+## Goals
+
+- Provide a fast, lightweight AI assistant
+- Support offline-first operation where possible
+- Enable easy customization and extension
+- Maintain high quality responses
+- Run efficiently on constrained hardware
+
+## License
+MIT License - Free and open source
+
+## Repository
+https://github.com/sipeed/picoclaw
+
+## Contact
+Issues: https://github.com/sipeed/picoclaw/issues
+Discussions: https://github.com/sipeed/picoclaw/discussions
+
+---
+
+"Every bit helps, every bit matters."
+- %s
+`, agentName, agentName),
+	}
+
+	for filename, content := range templates {
+		filePath := filepath.Join(workspace, filename)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			os.WriteFile(filePath, []byte(content), 0644)
+			fmt.Printf("  Created %s\n", filename)
+		}
+	}
+
+	memoryDir := filepath.Join(workspace, "memory")
+	os.MkdirAll(memoryDir, 0755)
+	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
+	if _, err := os.Stat(memoryFile); os.IsNotExist(err) {
+		memoryContent := `# Long-term Memory
+
+This file stores important information that should persist across sessions.
+
+## User Information
+
+(Important facts about user)
+
+## Preferences
+
+(User preferences learned over time)
+
+## Important Notes
+
+(Things to remember)
+
+## Configuration
+
+- Model preferences
+- Channel settings
+- Skills enabled
+`
+		os.WriteFile(memoryFile, []byte(memoryContent), 0644)
+		fmt.Println("  Created memory/MEMORY.md")
+
+		skillsDir := filepath.Join(workspace, "skills")
+		if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
+			os.MkdirAll(skillsDir, 0755)
+			fmt.Println("  Created skills/")
+		}
+	}
+
+	// 2. Fill in the rest from embedded files (safe copy, won't overwrite above)
 	err := copyEmbeddedToTarget(workspace)
 	if err != nil {
 		fmt.Printf("Error copying workspace templates: %v\n", err)
@@ -413,6 +581,7 @@ func agentCmd() {
 			"tools_count":      startupInfo["tools"].(map[string]interface{})["count"],
 			"skills_total":     startupInfo["skills"].(map[string]interface{})["total"],
 			"skills_available": startupInfo["skills"].(map[string]interface{})["available"],
+			"agent_name":       cfg.Agents.Defaults.Name,
 		})
 
 	if message != "" {
