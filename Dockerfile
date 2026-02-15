@@ -18,9 +18,9 @@ RUN make build
 # ============================================================
 # Stage 2: Minimal runtime image
 # ============================================================
-FROM alpine:3.23
+FROM python:3.14-alpine
 
-RUN apk add --no-cache ca-certificates tzdata curl
+RUN apk add --no-cache ca-certificates tzdata git make ffmpeg curl wget
 
 # Copy binary
 COPY --from=builder /src/build/picoclaw /usr/local/bin/picoclaw
