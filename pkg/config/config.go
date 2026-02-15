@@ -44,13 +44,14 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 type Config struct {
-	Agents    AgentsConfig    `json:"agents"`
-	Channels  ChannelsConfig  `json:"channels"`
-	Providers ProvidersConfig `json:"providers"`
-	Gateway   GatewayConfig   `json:"gateway"`
-	Tools     ToolsConfig     `json:"tools"`
-	Heartbeat HeartbeatConfig `json:"heartbeat"`
-	Devices   DevicesConfig   `json:"devices"`
+	Agents    AgentsConfig               `json:"agents"`
+	Channels  ChannelsConfig             `json:"channels"`
+	Providers ProvidersConfig            `json:"providers"`
+	Gateway   GatewayConfig              `json:"gateway"`
+	Tools     ToolsConfig                `json:"tools"`
+	MCP       map[string]MCPServerConfig `json:"mcp"`
+	Heartbeat HeartbeatConfig            `json:"heartbeat"`
+	Devices   DevicesConfig              `json:"devices"`
 	mu        sync.RWMutex
 }
 
@@ -220,6 +221,16 @@ type WebToolsConfig struct {
 
 type ToolsConfig struct {
 	Web WebToolsConfig `json:"web"`
+}
+
+type MCPServerConfig struct {
+	Enabled   bool              `json:"enabled"`
+	Command   string            `json:"command,omitempty"`   // stdio transport
+	Args      []string          `json:"args,omitempty"`
+	Cwd       string            `json:"cwd,omitempty"`       // working directory
+	Env       map[string]string `json:"env,omitempty"`
+	URL       string            `json:"url,omitempty"`       // SSE transport  
+	Transport string            `json:"transport,omitempty"` // "sse" (default for URL)
 }
 
 func DefaultConfig() *Config {
