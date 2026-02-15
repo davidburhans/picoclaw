@@ -200,30 +200,60 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		systemPrompt += "\n\n## Summary of Previous Conversation\n\n" + summary
 	}
 
-	//This fix prevents the session memory from LLM failure due to elimination of toolu_IDs required from LLM
-	// --- INICIO DEL FIX ---
-	//Diegox-17
-	for len(history) > 0 && (history[0].Role == "tool") {
-		logger.DebugCF("agent", "Removing orphaned tool message from history to prevent LLM error",
-			map[string]interface{}{"role": history[0].Role})
-		history = history[1:]
-	}
-	//Diegox-17
-	// --- FIN DEL FIX ---
-
 	messages = append(messages, providers.Message{
 		Role:    "system",
 		Content: systemPrompt,
 	})
 
-	messages = append(messages, history...)
-
-	messages = append(messages, providers.Message{
+	// Add history and current message
+	rawMessages := append([]providers.Message{}, history...)
+	rawMessages = append(rawMessages, providers.Message{
 		Role:    "user",
 		Content: currentMessage,
 	})
 
-	return messages
+	// Sanitize messages to ensure strict role alternation
+	// 1. Remove orphaned tool messages at the start (already handled partly by previous fix, but let's be thorough)
+	// 2. Merge consecutive messages with the same role
+	sanitized := []providers.Message{messages[0]} // Start with system prompt
+	for _, m := range rawMessages {
+		if len(sanitized) == 0 {
+			sanitized = append(sanitized, m)
+			continue
+		}
+
+		last := &sanitized[len(sanitized)-1]
+
+		// Role alternation logic
+		if m.Role == last.Role {
+			// Merge consecutive roles (except system, which shouldn't happen here but handle anyway)
+			if m.Role != "system" {
+				if last.Content != "" && m.Content != "" {
+					last.Content += "\n\n" + m.Content
+				} else if m.Content != "" {
+					last.Content = m.Content
+				}
+				// Merge tool calls if any
+				if len(m.ToolCalls) > 0 {
+					last.ToolCalls = append(last.ToolCalls, m.ToolCalls...)
+				}
+				logger.DebugCF("agent", "Merged consecutive messages with same role", map[string]interface{}{"role": m.Role})
+				continue
+			}
+		}
+
+		// Handle Tool message requirements: must follow assistant message with tool calls
+		if m.Role == "tool" {
+			if last.Role != "assistant" || len(last.ToolCalls) == 0 {
+				logger.WarnCF("agent", "Removing orphaned tool message from prompt", map[string]interface{}{"tool_call_id": m.ToolCallID})
+				continue
+			}
+		}
+
+		sanitized = append(sanitized, m)
+	}
+
+	return sanitized
 }
 
 func (cb *ContextBuilder) AddToolResult(messages []providers.Message, toolCallID, toolName, result string) []providers.Message {
