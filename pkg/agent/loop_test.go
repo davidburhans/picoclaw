@@ -736,3 +736,48 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateSessionSummary_Truncation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-summary-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				Model:     "test-model",
+			},
+		},
+	}
+
+	msgBus := bus.NewMessageBus()
+	// Mock provider returning a very long response
+	longResponse := "this_is_a_very_long_session_name_that_should_definitely_be_truncated_to_be_shorter"
+	provider := &simpleMockProvider{response: longResponse}
+	al := NewAgentLoop(cfg, msgBus, provider)
+
+	history := []providers.Message{
+		{Role: "user", Content: "Hello"},
+	}
+
+	summary, err := al.generateSessionSummary(context.Background(), history)
+	if err != nil {
+		t.Fatalf("generateSessionSummary failed: %v", err)
+	}
+
+	if len(summary) > 30 {
+		t.Errorf("Expected summary length <= 30, got %d: %s", len(summary), summary)
+	}
+
+	// It should cut at the last underscore before 30 chars
+	// "this_is_a_very_long_session_name_that_should_definitely_be_truncated_to_be_shorter"
+	// 30 chars: "this_is_a_very_long_session_na"
+	// Last underscore before index 30: "this_is_a_very_long_session" (index 27)
+	expectedPrefix := "this_is_a_very_long_session"
+	if summary != expectedPrefix {
+		t.Errorf("Expected summary '%s', got '%s'", expectedPrefix, summary)
+	}
+}

@@ -173,6 +173,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
+			// 2. Update tool contexts (resets sentInRound flag)
+			al.updateToolContexts(msg.Channel, msg.ChatID)
+
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
 				response = fmt.Sprintf("Error processing message: %v", err)
@@ -318,7 +321,7 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	}
 
 	// Prepare prompt
-	prompt := "Summarize the conversation content into a short, unique, filename-safe string (max 3-5 words, use underscores, no special chars). Output ONLY the string, no markdown."
+	prompt := "Create a VERY short session title (max 20 characters, 2-3 words, no special chars, use underscores). Format: [title]. Example: bug_fix_auth. Output ONLY the title."
 
 	// Create new message list for summarization
 	msgs := []providers.Message{
@@ -332,11 +335,8 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	}
 	msgs = append(msgs, history[start:]...)
 
-	// Disable tools for summary generation. Use a timeout to avoid hanging.
-	summaryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	resp, err := al.provider.Chat(summaryCtx, msgs, []providers.ToolDefinition{}, al.model, map[string]interface{}{
+	// Disable tools for summary generation
+	resp, err := al.provider.Chat(ctx, msgs, []providers.ToolDefinition{}, al.model, map[string]interface{}{
 		"max_tokens":  50,
 		"temperature": 0.5,
 	})
@@ -360,29 +360,42 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	}
 	summary = strings.Trim(summary, "_")
 
+	// Explicit truncation
+	if len(summary) > 30 {
+		summary = summary[:30]
+		// Cut at last underscore if possible to avoid partial words
+		if lastUnderscore := strings.LastIndex(summary, "_"); lastUnderscore > 10 {
+			summary = summary[:lastUnderscore]
+		}
+	}
+
 	return summary, nil
 }
 
 // RotateSession archives the current session and starts a new one.
 // Returns the new session key, the archived session key, and any error.
 func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName string) (string, string, error) {
+	logger.InfoCF("agent", "RotateSession starting", map[string]interface{}{"baseKey": baseKey, "archiveName": archiveName})
+
 	// 1. Identify the current active session key (old key)
 	oldKey := al.state.GetActiveSession(baseKey)
 	if oldKey == "" {
 		oldKey = baseKey // Fallback if no active session tracking yet
 	}
+	logger.InfoCF("agent", "RotateSession: oldKey identified", map[string]interface{}{"oldKey": oldKey})
 
 	// 2. Auto-generate name if none provided
 	if archiveName == "" {
 		// Get history to generate summary
 		history := al.sessions.GetHistory(oldKey)
+		logger.InfoCF("agent", "RotateSession: history length", map[string]interface{}{"len": len(history)})
 		if len(history) > 0 {
 			logger.InfoCF("agent", "Generating session summary for archive", map[string]interface{}{"key": oldKey})
 			generated, err := al.generateSessionSummary(ctx, history)
 			if err == nil && generated != "" {
 				archiveName = generated
 			} else {
-				logger.WarnCF("agent", "Failed to generate summary", map[string]interface{}{"error": err.Error()})
+				logger.WarnCF("agent", "Failed to generate summary", map[string]interface{}{"error": err})
 				// Fallback to timestamp ID
 				archiveName = time.Now().Format("20060102_150405")
 			}
@@ -391,9 +404,11 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 			archiveName = time.Now().Format("20060102_150405")
 		}
 	}
+	logger.InfoCF("agent", "RotateSession: archiveName final", map[string]interface{}{"name": archiveName})
 
 	// 3. Rename the OLD session file
 	newArchiveKey := fmt.Sprintf("%s_%s", oldKey, archiveName)
+	logger.InfoCF("agent", "RotateSession: renaming", map[string]interface{}{"old": oldKey, "new": newArchiveKey})
 	if err := al.sessions.RenameSession(oldKey, newArchiveKey); err != nil {
 		logger.WarnCF("agent", "Failed to rename archived session", map[string]interface{}{
 			"error": err.Error(),
@@ -414,7 +429,7 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 		return "", "", err
 	}
 
-	logger.InfoCF("agent", "Started new session", map[string]interface{}{
+	logger.InfoCF("agent", "RotateSession: completed", map[string]interface{}{
 		"archive_key": newArchiveKey,
 		"new_key":     newKey,
 	})
@@ -513,6 +528,10 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	// 4. Run LLM iteration loop
 	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts)
 	if err != nil {
+		// Even if iteration fails, we should record an assistant response to maintain role balance
+		errContent := fmt.Sprintf("Error processing message: %v", err)
+		al.sessions.AddMessage(opts.SessionKey, "assistant", errContent)
+		al.sessions.Save(opts.SessionKey)
 		return "", err
 	}
 
