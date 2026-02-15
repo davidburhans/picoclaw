@@ -154,6 +154,15 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 		return
 	}
 
+	// Add reaction to acknowledge message receipt
+	go func() {
+		if err := s.MessageReactionAdd(m.ChannelID, m.ID, "⚙️"); err != nil {
+			logger.WarnCF("discord", "Failed to add reaction", map[string]any{
+				"error": err.Error(),
+			})
+		}
+	}()
+
 	senderID := m.Author.ID
 	senderName := m.Author.Username
 	if m.Author.Discriminator != "" && m.Author.Discriminator != "0" {
