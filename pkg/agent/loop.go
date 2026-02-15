@@ -140,7 +140,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	contextBuilder := NewContextBuilder(workspace, cfg.Agents.Defaults.Name)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
 
-	return &AgentLoop{
+	al := &AgentLoop{
 		bus:            msgBus,
 		provider:       provider,
 		workspace:      workspace,
@@ -153,6 +153,11 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		tools:          toolsRegistry,
 		summarizing:    sync.Map{},
 	}
+
+	// Register session control tool
+	toolsRegistry.Register(tools.NewSessionControlTool(al))
+
+	return al
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
@@ -269,76 +274,21 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return al.processSystemMessage(ctx, msg)
 	}
 
-// Check for !new command to start a fresh session
-	// Use TrimSpace to handle leading/trailing whitespace from different channels
+	// Check for !new command to start a fresh session
 	trimmedContent := strings.TrimSpace(msg.Content)
 	if strings.HasPrefix(trimmedContent, "!new") {
-		// 1. Determine name for the OLD session (archive name)
 		var archiveName string
 		parts := strings.Fields(trimmedContent)
 		if len(parts) > 1 {
-			// User provided a name: "!new my-project" -> archive old session as "..._my-project"
-			archiveName = strings.Join(parts[1:], "_") // Replace spaces with underscores
+			archiveName = strings.Join(parts[1:], "_")
 		}
 
-		// 2. Identify the current active session key (old key)
-		oldKey := al.state.GetActiveSession(msg.SessionKey)
-		if oldKey == "" {
-			oldKey = msg.SessionKey // Fallback if no active session tracking yet
-		}
-
-		// 3. Auto-generate name if none provided
-		if archiveName == "" {
-			// Get history to generate summary
-			history := al.sessions.GetHistory(oldKey)
-			if len(history) > 0 {
-				logger.InfoCF("agent", "Generating session summary for archive", map[string]interface{}{"key": oldKey})
-				generated, err := al.generateSessionSummary(ctx, history)
-				if err == nil && generated != "" {
-					archiveName = generated
-				} else {
-					logger.WarnCF("agent", "Failed to generate summary", map[string]interface{}{"error": err.Error()})
-					// Fallback to timestamp ID
-					archiveName = time.Now().Format("20060102_150405")
-				}
-			} else {
-				// Empty history, just use timestamp
-				archiveName = time.Now().Format("20060102_150405")
-			}
-		}
-
-		// 4. Rename the OLD session file
-		// newArchiveKey = oldKey + "_" + archiveName
-		// e.g. discord_123_v1 -> discord_123_v1_my-project
-		newArchiveKey := fmt.Sprintf("%s_%s", oldKey, archiveName)
-		
-		if err := al.sessions.RenameSession(oldKey, newArchiveKey); err != nil {
-			logger.WarnCF("agent", "Failed to rename archived session", map[string]interface{}{
-				"error": err.Error(),
-				"old":   oldKey,
-				"new":   newArchiveKey,
-			})
-			// If rename fails (e.g. file not found), we keep oldKey as valid reference
-			newArchiveKey = oldKey 
-		}
-
-		// 5. Start NEW session
-		// Pass empty name so it just increments version (e.g. ..._v2)
-		newKey, err := al.state.StartNewSession(msg.SessionKey, "")
+		newKey, archivedKey, err := al.RotateSession(ctx, msg.SessionKey, archiveName)
 		if err != nil {
-			logger.ErrorCF("agent", "Failed to start new session", map[string]interface{}{
-				"error":       err.Error(),
-				"session_key": msg.SessionKey,
-			})
 			return fmt.Sprintf("Error starting new session: %v", err), nil
 		}
 
-		logger.InfoCF("agent", "Started new session", map[string]interface{}{
-			"archive_key": newArchiveKey,
-			"new_key":     newKey,
-		})
-
-		return fmt.Sprintf("🚀 Started new session: `%s`.\nArchived previous session as: `%s`.", newKey, newArchiveKey), nil
+		return fmt.Sprintf("🚀 Started new session: `%s`.\nArchived previous session as: `%s`.", newKey, archivedKey), nil
 	}
 
 
@@ -408,6 +358,65 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	summary = strings.Trim(summary, "_")
 
 	return summary, nil
+}
+
+// RotateSession archives the current session and starts a new one.
+// Returns the new session key, the archived session key, and any error.
+func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName string) (string, string, error) {
+	// 1. Identify the current active session key (old key)
+	oldKey := al.state.GetActiveSession(baseKey)
+	if oldKey == "" {
+		oldKey = baseKey // Fallback if no active session tracking yet
+	}
+
+	// 2. Auto-generate name if none provided
+	if archiveName == "" {
+		// Get history to generate summary
+		history := al.sessions.GetHistory(oldKey)
+		if len(history) > 0 {
+			logger.InfoCF("agent", "Generating session summary for archive", map[string]interface{}{"key": oldKey})
+			generated, err := al.generateSessionSummary(ctx, history)
+			if err == nil && generated != "" {
+				archiveName = generated
+			} else {
+				logger.WarnCF("agent", "Failed to generate summary", map[string]interface{}{"error": err.Error()})
+				// Fallback to timestamp ID
+				archiveName = time.Now().Format("20060102_150405")
+			}
+		} else {
+			// Empty history, just use timestamp
+			archiveName = time.Now().Format("20060102_150405")
+		}
+	}
+
+	// 3. Rename the OLD session file
+	newArchiveKey := fmt.Sprintf("%s_%s", oldKey, archiveName)
+	if err := al.sessions.RenameSession(oldKey, newArchiveKey); err != nil {
+		logger.WarnCF("agent", "Failed to rename archived session", map[string]interface{}{
+			"error": err.Error(),
+			"old":   oldKey,
+			"new":   newArchiveKey,
+		})
+		// If rename fails (e.g. file not found), we keep oldKey as valid reference
+		newArchiveKey = oldKey
+	}
+
+	// 4. Start NEW session
+	newKey, err := al.state.StartNewSession(baseKey, "")
+	if err != nil {
+		logger.ErrorCF("agent", "Failed to start new session", map[string]interface{}{
+			"error":       err.Error(),
+			"session_key": baseKey,
+		})
+		return "", "", err
+	}
+
+	logger.InfoCF("agent", "Started new session", map[string]interface{}{
+		"archive_key": newArchiveKey,
+		"new_key":     newKey,
+	})
+
+	return newKey, newArchiveKey, nil
 }
 
 func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
@@ -540,6 +549,14 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 		})
 
 	return finalContent, nil
+}
+
+func (al *AgentLoop) GetSessionManager() *session.SessionManager {
+	return al.sessions
+}
+
+func (al *AgentLoop) GetActiveSession(baseKey string) string {
+	return al.state.GetActiveSession(baseKey)
 }
 
 // runLLMIteration executes the LLM call loop with tool handling.
