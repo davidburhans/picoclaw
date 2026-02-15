@@ -655,6 +655,85 @@ The subagent has access to tools (message, web_search, etc.) and can communicate
 * `PICOCLAW_HEARTBEAT_ENABLED=false` to disable
 * `PICOCLAW_HEARTBEAT_INTERVAL=60` to change interval
 
+### MCP Servers
+
+PicoClaw supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) for integrating external tools and services. MCP servers run as separate processes and expose tools that the agent can call.
+
+**Configuration:**
+
+```json
+{
+  "mcp": {
+    "local-script": {
+      "enabled": true,
+      "command": "mcp",
+      "args": ["run", "local-script.py"],
+      "cwd": "/mcp/local"
+    },
+    "github": {
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_..."
+      }
+    },
+    "remote": {
+      "enabled": true,
+      "url": "http://localhost:8080/mcp",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | bool | Enable/disable this server |
+| `command` | string | Command to run (stdio transport) |
+| `args` | []string | Command arguments |
+| `cwd` | string | Working directory (defaults to workspace) |
+| `env` | map | Environment variables |
+| `url` | string | Server URL (SSE transport) |
+| `transport` | string | `"sse"` for SSE transport |
+
+**Transport:** If `command` is set, stdio transport is used. If `url` is set, SSE transport is used.
+
+**Tool Naming:** MCP tools are registered with the prefix `mcp_<server>_<tool>`. For example, a tool named `search` from the `media-agent` server becomes `mcp_media_agent_search`.
+
+**Docker Usage:**
+
+When using Docker, MCP server files live on the host and are volume-mapped into the container:
+
+1. Place your MCP server files in `./mcp/<server-name>/`
+2. The `cwd` in config should reference the container path: `"/mcp/media-agent"`
+3. Volume mapping is already configured in `docker-compose.yml`: `./mcp:/mcp:ro`
+
+**Example:**
+
+```bash
+# Place your MCP server script
+mkdir -p ./mcp/media-agent
+echo "#!/usr/bin/env python3" > ./mcp/media-agent/server.py
+# ... implement your server ...
+
+# Update config.json
+{
+  "mcp": {
+    "media-agent": {
+      "enabled": true,
+      "command": "python3",
+      "args": ["server.py"],
+      "cwd": "/mcp/media-agent"
+    }
+  }
+}
+
+# Run
+docker compose --profile gateway up
+```
+
+
 ### Providers
 
 > [!NOTE]
@@ -765,6 +844,13 @@ picoclaw agent -m "Hello"
         "enabled": true,
         "max_results": 5
       }
+    }
+  },
+  "mcp": {
+    "filesystem": {
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/documents"]
     }
   },
   "heartbeat": {

@@ -13,6 +13,7 @@ services:
     volumes:
       - ./config/config.json:/root/.picoclaw/config.json:ro
       - picoclaw-workspace:/root/.picoclaw/workspace
+      - ./mcp:/mcp:ro
     entrypoint: ["picoclaw", "agent"]
     stdin_open: true
     tty: true
@@ -34,6 +35,8 @@ services:
       - ./config/config.json:/root/.picoclaw/config.json:ro
       # Persistent workspace (sessions, memory, logs)
       - picoclaw-workspace:/root/.picoclaw/workspace
+      # MCP server files
+      - ./mcp:/mcp:ro
     command: ["gateway"]
 
 volumes:
