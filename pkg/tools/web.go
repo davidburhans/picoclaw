@@ -176,6 +176,72 @@ func stripTags(content string) string {
 	return re.ReplaceAllString(content, "")
 }
 
+type SearXNGSearchProvider struct {
+	baseURL string
+}
+
+func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count int) (string, error) {
+	// Standard SearXNG JSON API endpoint
+	searchURL, err := url.Parse(p.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid SearXNG base URL: %w", err)
+	}
+
+	q := searchURL.Query()
+	q.Set("q", query)
+	q.Set("format", "json")
+	searchURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("SearXNG returned status: %d", resp.StatusCode)
+	}
+
+	var searchResp struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return "", fmt.Errorf("failed to parse SearXNG response: %w", err)
+	}
+
+	if len(searchResp.Results) == 0 {
+		return fmt.Sprintf("No results for: %s", query), nil
+	}
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("Results for: %s (via SearXNG)", query))
+	for i, item := range searchResp.Results {
+		if i >= count {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s\n   %s", i+1, item.Title, item.URL))
+		if item.Content != "" {
+			lines = append(lines, fmt.Sprintf("   %s", item.Content))
+		}
+	}
+
+	return strings.Join(lines, "\n"), nil
+}
+
 type WebSearchTool struct {
 	provider   SearchProvider
 	maxResults int
@@ -187,14 +253,22 @@ type WebSearchToolOptions struct {
 	BraveEnabled         bool
 	DuckDuckGoMaxResults int
 	DuckDuckGoEnabled    bool
+	SearXNGURL           string
+	SearXNGMaxResults    int
+	SearXNGEnabled       bool
 }
 
 func NewWebSearchTool(opts WebSearchToolOptions) *WebSearchTool {
 	var provider SearchProvider
 	maxResults := 5
 
-	// Priority: Brave > DuckDuckGo
-	if opts.BraveEnabled && opts.BraveAPIKey != "" {
+	// Priority: SearXNG > Brave > DuckDuckGo
+	if opts.SearXNGEnabled && opts.SearXNGURL != "" {
+		provider = &SearXNGSearchProvider{baseURL: opts.SearXNGURL}
+		if opts.SearXNGMaxResults > 0 {
+			maxResults = opts.SearXNGMaxResults
+		}
+	} else if opts.BraveEnabled && opts.BraveAPIKey != "" {
 		provider = &BraveSearchProvider{apiKey: opts.BraveAPIKey}
 		if opts.BraveMaxResults > 0 {
 			maxResults = opts.BraveMaxResults
@@ -219,7 +293,7 @@ func (t *WebSearchTool) Name() string {
 }
 
 func (t *WebSearchTool) Description() string {
-	return "Search the web for current information. Returns titles, URLs, and snippets from search results."
+	return "Search the web for current information. Returns titles, URLs, and snippets from search results. Use this tool for broad queries and discovery before fetching specific pages."
 }
 
 func (t *WebSearchTool) Parameters() map[string]interface{} {
