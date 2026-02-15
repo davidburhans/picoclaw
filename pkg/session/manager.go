@@ -264,3 +264,41 @@ func (sm *SessionManager) loadSessions() error {
 
 	return nil
 }
+
+func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.storage == "" {
+		return nil
+	}
+
+	// Validate new key
+	if newKey == "" || newKey == "." || newKey == ".." || newKey != filepath.Base(newKey) || strings.Contains(newKey, "/") || strings.Contains(newKey, "\\") {
+		return os.ErrInvalid
+	}
+
+	session, ok := sm.sessions[oldKey]
+	if !ok {
+		return nil // Session not loaded or doesn't exist in memory
+	}
+
+	// Check if target already exists
+	if _, exists := sm.sessions[newKey]; exists {
+		return os.ErrExist
+	}
+
+	// Rename file
+	oldPath := filepath.Join(sm.storage, oldKey+".json")
+	newPath := filepath.Join(sm.storage, newKey+".json")
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+
+	// Update memory
+	session.Key = newKey
+	sm.sessions[newKey] = session
+	delete(sm.sessions, oldKey)
+
+	return nil
+}

@@ -447,6 +447,14 @@ picoclaw gateway
 
 </details>
 
+## 💬 Chat Commands
+
+Commands you can send directly to the agent in any chat app:
+
+| Command | Description |
+| ------- | ----------- |
+| `!new [name]` | Start a new chat session. The *current* session is archived as `..._name` (or auto-named if no name provided). The new session starts fresh. |
+
 ## <img src="assets/clawdchat-icon.png" width="24" height="24" alt="ClawdChat"> Join the Agent Social Network
 
 Connect Picoclaw to the Agent Social Network simply by sending a single message via the CLI or any integrated Chat App.

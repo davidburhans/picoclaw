@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -525,5 +526,213 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 	// User-facing tool should include the output in final response
 	if response != "Command output: hello world" {
 		t.Errorf("Expected 'Command output: hello world', got: %s", response)
+	}
+}
+
+func TestAgentLoop_SessionRotation(t *testing.T) {
+	// Create temp workspace
+	tmpDir, err := os.MkdirTemp("", "agent-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test config
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				Model:             "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+	}
+
+	// Create agent loop
+	msgBus := bus.NewMessageBus()
+	provider := &simpleMockProvider{response: "Test response"}
+	al := NewAgentLoop(cfg, msgBus, provider)
+	helper := testHelper{al: al}
+
+	// Create a context
+	ctx := context.Background()
+
+	// 1. Send /new (should rotate session)
+	// Key: discord_123
+	msg1 := bus.InboundMessage{
+		Channel:    "discord",
+		ChatID:     "123",
+		Content:    "!new my-task",
+		SessionKey: "discord_123",
+	}
+    
+    // Add initial session file for RenameSession to succeed
+    al.sessions.AddMessage("discord_123", "system", "Initial session")
+    al.sessions.Save("discord_123")
+
+	response1, err := al.processMessage(ctx, msg1)
+	if err != nil {
+		t.Fatalf("Failed to process !new: %v", err)
+	}
+	
+	// Verify response contains "Started new session"
+	if !strings.Contains(response1, "Started new session") {
+		t.Errorf("Expected confirmation of new session, got: %s", response1)
+	}
+
+	// 2. Verify state updated
+	activeSession := al.state.GetActiveSession("discord_123")
+	// Should be: discord_123_v1 (unnamed, since name is for archive)
+	expectedKey := "discord_123_v1"
+	if activeSession != expectedKey {
+		t.Errorf("Expected active session '%s', got '%s'", expectedKey, activeSession)
+	}
+
+	// 3. Send message to new session
+	msg2 := bus.InboundMessage{
+		Channel:    "discord",
+		ChatID:     "123",
+		Content:    "Hello",
+		SessionKey: "discord_123",
+	}
+	response2 := helper.executeAndGetResponse(t, ctx, msg2)
+	
+	if response2 != "Test response" {
+		t.Errorf("Expected 'Test response', got: %s", response2)
+	}
+
+	// Verify new session file exists
+	// Wait, runAgentLoop calls al.sessions.AddMessage -> Save()
+	// Save() uses session key as filename.
+	// We updated msg.SessionKey to effectiveSessionKey before calling runAgentLoop.
+	// So it should save to discord_123_v1.json
+	
+	newSessionPath := filepath.Join(tmpDir, "sessions", expectedKey+".json")
+	if _, err := os.Stat(newSessionPath); os.IsNotExist(err) {
+		t.Errorf("Expected session file %s to exist in %s", expectedKey+".json", filepath.Join(tmpDir, "sessions"))
+	}
+}
+
+func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
+	// Create temp workspace
+	tmpDir, err := os.MkdirTemp("", "agent-test-cross-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test config
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				Model:             "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+	}
+
+	// Create agent loop
+	msgBus := bus.NewMessageBus()
+	provider := &simpleMockProvider{response: "Test response"}
+	al := NewAgentLoop(cfg, msgBus, provider)
+
+	ctx := context.Background()
+
+	testCases := []struct {
+		name          string
+		channel       string
+		chatID        string
+		content       string
+		sessionKey    string
+		expectedKey   string // Active key is v1
+        archiveName   string // For verification string
+		shouldSucceed bool
+	}{
+		{
+			name:          "CLI with leading space",
+			channel:       "cli",
+			chatID:        "console",
+			content:       "  !new cli-task",
+			sessionKey:    "cli_console",
+			expectedKey:   "cli_console_v1",
+            archiveName:   "cli_console_cli-task",
+			shouldSucceed: true,
+		},
+		{
+			name:          "Telegram normal",
+			channel:       "telegram",
+			chatID:        "12345",
+			content:       "!new tg-task",
+			sessionKey:    "telegram_12345",
+			expectedKey:   "telegram_12345_v1",
+            archiveName:   "telegram_12345_tg-task",
+			shouldSucceed: true,
+		},
+		{
+			name:          "Discord with surrounding space",
+			channel:       "discord",
+			chatID:        "9876",
+			content:       " \t !new discord-task \n ",
+			sessionKey:    "discord_9876",
+			expectedKey:   "discord_9876_v1",
+            archiveName:   "discord_9876_discord-task",
+			shouldSucceed: true,
+		},
+		{
+			name:          "Auto-generate name",
+			channel:       "cli",
+			chatID:        "console-auto",
+			content:       "!new",
+			sessionKey:    "cli_console-auto",
+			expectedKey:   "cli_console-auto_v1",
+            archiveName:   "cli_console-auto_Test_response", // Mock provider returns "Test response"
+			shouldSucceed: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := bus.InboundMessage{
+				Channel:    tc.channel,
+				ChatID:     tc.chatID,
+				Content:    tc.content,
+				SessionKey: tc.sessionKey,
+			}
+            
+            // Add a message to history so auto-gen has something to summarize
+            if strings.TrimSpace(tc.content) == "!new" {
+                al.sessions.AddMessage(tc.sessionKey, "user", "History context")
+            }
+
+			// Add initial session file for RenameSession to succeed
+			al.sessions.AddMessage(tc.sessionKey, "system", "Initial session")
+			al.sessions.Save(tc.sessionKey)
+			
+			response, err := al.processMessage(ctx, msg)
+			if err != nil {
+				t.Fatalf("Failed to process !new: %v", err)
+			}
+			
+			if !strings.Contains(response, "Started new session") {
+				t.Errorf("Expected confirmation of new session, got: %s", response)
+			}
+			
+			if !strings.Contains(response, "Archived previous session as:") {
+				t.Errorf("Expected mention of archived session, got: %s", response)
+			}
+            
+            if !strings.Contains(response, tc.archiveName) {
+                t.Errorf("Expected archive name '%s' in response, got: %s", tc.archiveName, response)
+            }
+
+			// Verify state updated
+			activeSession := al.state.GetActiveSession(tc.sessionKey)
+			if activeSession != tc.expectedKey {
+				t.Errorf("Expected active session '%s', got '%s'", tc.expectedKey, activeSession)
+			}
+		})
 	}
 }

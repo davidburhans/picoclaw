@@ -21,6 +21,12 @@ type State struct {
 
 	// Timestamp is the last time this state was updated
 	Timestamp time.Time `json:"timestamp"`
+
+	// SessionVersions tracks the current version number for each session base key
+	SessionVersions map[string]int `json:"session_versions,omitempty"`
+
+	// ActiveSessions tracks the currently active full session key for each base key
+	ActiveSessions map[string]string `json:"active_sessions,omitempty"`
 }
 
 // Manager manages persistent state with atomic saves.
@@ -43,7 +49,10 @@ func NewManager(workspace string) *Manager {
 	sm := &Manager{
 		workspace: workspace,
 		stateFile: stateFile,
-		state:     &State{},
+		state: &State{
+			SessionVersions: make(map[string]int),
+			ActiveSessions:  make(map[string]string),
+		},
 	}
 
 	// Try to load from new location first
@@ -51,6 +60,13 @@ func NewManager(workspace string) *Manager {
 		// New file doesn't exist, try migrating from old location
 		if data, err := os.ReadFile(oldStateFile); err == nil {
 			if err := json.Unmarshal(data, sm.state); err == nil {
+				// Initialize maps if missing after unmarshal
+				if sm.state.SessionVersions == nil {
+					sm.state.SessionVersions = make(map[string]int)
+				}
+				if sm.state.ActiveSessions == nil {
+					sm.state.ActiveSessions = make(map[string]string)
+				}
 				// Migrate to new location
 				sm.saveAtomic()
 				log.Printf("[INFO] state: migrated state from %s to %s", oldStateFile, stateFile)
@@ -112,6 +128,76 @@ func (sm *Manager) GetLastChatID() string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.state.LastChatID
+}
+
+// GetSessionVersion returns the current version for a session base key.
+func (sm *Manager) GetSessionVersion(baseKey string) int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.SessionVersions[baseKey]
+}
+
+// GetActiveSession returns the active full session key for a base key.
+func (sm *Manager) GetActiveSession(baseKey string) string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.ActiveSessions[baseKey]
+}
+
+// StartNewSession increments the version for a session and returns the new full key.
+// The new key format is: baseKey_vN_name (with colons in baseKey replaced by underscores)
+func (sm *Manager) StartNewSession(baseKey, name string) (string, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Initialize maps if nil (can happen if loaded from old state file without migration logic triggering)
+	if sm.state.SessionVersions == nil {
+		sm.state.SessionVersions = make(map[string]int)
+	}
+	if sm.state.ActiveSessions == nil {
+		sm.state.ActiveSessions = make(map[string]string)
+	}
+
+	// Increment version
+	newVersion := sm.state.SessionVersions[baseKey] + 1
+	sm.state.SessionVersions[baseKey] = newVersion
+
+	// Sanitize baseKey for filename (replace : with _)
+	safeBaseKey := baseKey
+	// Simple replacement for colon which is common in "channel:id" keys
+	// We rely on the caller to provide a reasonably safe baseKey, but we strictly enforce no colons for the file part.
+	// Actually, a better approach is to handle the replacement here or in the caller.
+	// Let's assume the baseKey passed here is the logical key (e.g. "discord:123"),
+	// and we want the file key to be "discord_123_v1_name".
+	// But wait, the session manager expects the key to be the filename (without .json).
+	// So we should construct a safe key here.
+	
+	// Replace all colons with underscores
+	safeBaseKey = ""
+	for _, c := range baseKey {
+		if c == ':' {
+			safeBaseKey += "_"
+		} else {
+			safeBaseKey += string(c)
+		}
+	}
+
+	// Construct new full key
+	newKey := fmt.Sprintf("%s_v%d", safeBaseKey, newVersion)
+	if name != "" {
+		newKey += "_" + name
+	}
+
+	// Update active session
+	sm.state.ActiveSessions[baseKey] = newKey
+	sm.state.Timestamp = time.Now()
+
+	// Save state
+	if err := sm.saveAtomic(); err != nil {
+		return "", fmt.Errorf("failed to save state: %w", err)
+	}
+
+	return newKey, nil
 }
 
 // GetTimestamp returns the timestamp of the last state update.
