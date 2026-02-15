@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	transcriptionTimeout = 30 * time.Second
-	sendTimeout          = 10 * time.Second
+	transcriptionTimeout    = 30 * time.Second
+	sendTimeout             = 10 * time.Second
+	maxDiscordMessageLength = 1950
 )
 
 type DiscordChannel struct {
@@ -100,27 +101,67 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 		return fmt.Errorf("channel ID is empty")
 	}
 
-	message := msg.Content
+	chunks := splitMessage(msg.Content, maxDiscordMessageLength)
 
-	// 使用传入的 ctx 进行超时控制
-	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	defer cancel()
+	for _, chunk := range chunks {
+		// 使用传入的 ctx 进行超时控制
+		sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+		defer cancel()
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := c.session.ChannelMessageSend(channelID, message)
-		done <- err
-	}()
+		done := make(chan error, 1)
+		go func(content string) {
+			_, err := c.session.ChannelMessageSend(channelID, content)
+			done <- err
+		}(chunk)
 
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("failed to send discord message: %w", err)
+		select {
+		case err := <-done:
+			if err != nil {
+				return fmt.Errorf("failed to send discord message: %w", err)
+			}
+		case <-sendCtx.Done():
+			return fmt.Errorf("send message timeout: %w", sendCtx.Err())
 		}
-		return nil
-	case <-sendCtx.Done():
-		return fmt.Errorf("send message timeout: %w", sendCtx.Err())
 	}
+
+	return nil
+}
+
+func splitMessage(content string, limit int) []string {
+	runes := []rune(content)
+	if len(runes) <= limit {
+		return []string{content}
+	}
+
+	var chunks []string
+	for len(runes) > limit {
+		// Find the last newline within the limit
+		splitIdx := -1
+		for i := limit; i >= 0; i-- {
+			if runes[i] == '\n' {
+				splitIdx = i
+				break
+			}
+		}
+
+		// If no newline found, just split at the limit
+		if splitIdx == -1 {
+			splitIdx = limit
+		}
+
+		chunks = append(chunks, string(runes[:splitIdx]))
+		runes = runes[splitIdx:]
+		// Trim leading newline if we split on one
+		if len(runes) > 0 && runes[0] == '\n' {
+			runes = runes[1:]
+		}
+	}
+
+	if len(runes) > 0 {
+		chunks = append(chunks, string(runes))
+	}
+
+	return chunks
 }
 
 // appendContent 安全地追加内容到现有文本
