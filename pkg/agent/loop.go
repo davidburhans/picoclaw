@@ -332,8 +332,11 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	}
 	msgs = append(msgs, history[start:]...)
 
-	// Disable tools for summary generation
-	resp, err := al.provider.Chat(ctx, msgs, []providers.ToolDefinition{}, al.model, map[string]interface{}{
+	// Disable tools for summary generation. Use a timeout to avoid hanging.
+	summaryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := al.provider.Chat(summaryCtx, msgs, []providers.ToolDefinition{}, al.model, map[string]interface{}{
 		"max_tokens":  50,
 		"temperature": 0.5,
 	})

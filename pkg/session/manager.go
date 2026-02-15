@@ -273,8 +273,8 @@ func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
 		return nil
 	}
 
-	// Validate new key
-	if newKey == "" || newKey == "." || newKey == ".." || newKey != filepath.Base(newKey) || strings.Contains(newKey, "/") || strings.Contains(newKey, "\\") {
+	// Validate keys - they shouldn't contain directory separators
+	if newKey == "" || strings.ContainsAny(newKey, `/\`) {
 		return os.ErrInvalid
 	}
 
@@ -288,9 +288,13 @@ func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
 		return os.ErrExist
 	}
 
-	// Rename file
-	oldPath := filepath.Join(sm.storage, oldKey+".json")
-	newPath := filepath.Join(sm.storage, newKey+".json")
+	// Rename file using sanitized paths
+	oldFilename := sanitizeFilename(oldKey)
+	newFilename := sanitizeFilename(newKey)
+	
+	oldPath := filepath.Join(sm.storage, oldFilename+".json")
+	newPath := filepath.Join(sm.storage, newFilename+".json")
+	
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return err
 	}
