@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -20,6 +22,7 @@ type ContextBuilder struct {
 	skillsLoader *skills.SkillsLoader
 	memory       *MemoryStore
 	tools        *tools.ToolRegistry // Direct reference to tool registry
+	mcpManager   *mcp.MCPManager     // Direct reference to MCP manager
 }
 
 func getGlobalConfigDir() string {
@@ -53,6 +56,11 @@ func NewContextBuilder(workspace, agentName string) *ContextBuilder {
 // SetToolsRegistry sets the tools registry for dynamic tool summary generation.
 func (cb *ContextBuilder) SetToolsRegistry(registry *tools.ToolRegistry) {
 	cb.tools = registry
+}
+
+// SetMCPManager sets the MCP manager for system prompt generation.
+func (cb *ContextBuilder) SetMCPManager(manager *mcp.MCPManager) {
+	cb.mcpManager = manager
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -117,6 +125,37 @@ func (cb *ContextBuilder) buildToolsSection() string {
 	return sb.String()
 }
 
+func (cb *ContextBuilder) buildMCPSection() string {
+	if cb.mcpManager == nil || cb.mcpManager.Count() == 0 {
+		return ""
+	}
+
+	ctx := context.Background()
+	summaries := cb.mcpManager.GetServerSummaries(ctx)
+	if len(summaries) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## MCP Servers\n\n")
+	sb.WriteString("External services available via MCP (tool names prefixed with `mcp_`):\n\n")
+	for _, s := range summaries {
+		sb.WriteString(fmt.Sprintf("- **%s** — %s\n", s.Name, s.Description))
+		if len(s.Tools) > 0 {
+			sb.WriteString("  - Tools: ")
+			for i, tool := range s.Tools {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString("`" + tool + "`")
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	return sb.String()
+}
+
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	parts := []string{}
 
@@ -137,6 +176,12 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
 
 %s`, skillsSummary))
+	}
+
+	// MCP servers - show available external services
+	mcpSection := cb.buildMCPSection()
+	if mcpSection != "" {
+		parts = append(parts, mcpSection)
 	}
 
 	// Memory context

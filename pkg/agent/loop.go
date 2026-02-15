@@ -22,6 +22,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -40,6 +41,7 @@ type AgentLoop struct {
 	state          *state.Manager
 	contextBuilder *ContextBuilder
 	tools          *tools.ToolRegistry
+	mcpManager     *mcp.MCPManager
 	running        atomic.Bool
 	summarizing    sync.Map // Tracks which sessions are currently being summarized
 }
@@ -105,6 +107,41 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	})
 	registry.Register(messageTool)
 
+	// MCP tools - register tools from all enabled MCP servers
+	if cfg.MCP != nil && len(cfg.MCP) > 0 {
+		mcpMgr := mcp.NewMCPManager(cfg.MCP, workspace)
+		ctx := context.Background()
+		if err := mcpMgr.StartAll(ctx, cfg.MCP); err != nil {
+			logger.ErrorCF("mcp", "Failed to start MCP servers",
+				map[string]interface{}{"error": err.Error()})
+		} else if mcpMgr.Count() > 0 {
+			// Get all tools from all servers
+			allTools := mcpMgr.GetAllTools(ctx)
+			totalTools := 0
+			for serverName, serverTools := range allTools {
+				for _, toolDef := range serverTools {
+					client := mcpMgr.GetClient(serverName)
+					if client != nil {
+						adapter := tools.NewMCPToolAdapter(
+							serverName,
+							toolDef.Name,
+							toolDef.Description,
+							toolDef.InputSchema,
+							client,
+						)
+						registry.Register(adapter)
+						totalTools++
+					}
+				}
+			}
+			logger.InfoCF("mcp", "Registered MCP tools",
+				map[string]interface{}{
+					"servers": mcpMgr.Count(),
+					"tools":   totalTools,
+				})
+		}
+	}
+
 	return registry
 }
 
@@ -136,9 +173,45 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	// Create state manager for atomic state persistence
 	stateManager := state.NewManager(workspace)
 
+	// Create MCP manager and start servers
+	mcpManager := mcp.NewMCPManager(cfg.MCP, workspace)
+	ctx := context.Background()
+	if err := mcpManager.StartAll(ctx, cfg.MCP); err != nil {
+		logger.ErrorCF("mcp", "Failed to start MCP servers",
+			map[string]interface{}{"error": err.Error()})
+	}
+
+	// Register MCP tools in the main agent's registry
+	if mcpManager.Count() > 0 {
+		allTools := mcpManager.GetAllTools(ctx)
+		totalTools := 0
+		for serverName, serverTools := range allTools {
+			for _, toolDef := range serverTools {
+				client := mcpManager.GetClient(serverName)
+				if client != nil {
+					adapter := tools.NewMCPToolAdapter(
+						serverName,
+						toolDef.Name,
+						toolDef.Description,
+						toolDef.InputSchema,
+						client,
+					)
+					toolsRegistry.Register(adapter)
+					totalTools++
+				}
+			}
+		}
+		logger.InfoCF("mcp", "Registered MCP tools in main agent",
+			map[string]interface{}{
+				"servers": mcpManager.Count(),
+				"tools":   totalTools,
+			})
+	}
+
 	// Create context builder and set tools registry
 	contextBuilder := NewContextBuilder(workspace, cfg.Agents.Defaults.Name)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
+	contextBuilder.SetMCPManager(mcpManager)
 
 	al := &AgentLoop{
 		bus:            msgBus,
@@ -151,6 +224,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		state:          stateManager,
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
+		mcpManager:     mcpManager,
 		summarizing:    sync.Map{},
 	}
 
@@ -207,6 +281,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+	// Clean up MCP clients
+	if al.mcpManager != nil {
+		al.mcpManager.StopAll()
+	}
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
