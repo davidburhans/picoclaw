@@ -37,6 +37,7 @@ type AgentLoop struct {
 	model          string
 	contextWindow  int // Maximum context window size in tokens
 	maxIterations  int
+	timeout        time.Duration // Session timeout
 	sessions       *session.SessionManager
 	state          *state.Manager
 	contextBuilder *ContextBuilder
@@ -220,6 +221,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		model:          cfg.Agents.Defaults.Model,
 		contextWindow:  cfg.Agents.Defaults.MaxTokens, // Restore context window for summarization
 		maxIterations:  cfg.Agents.Defaults.MaxToolIterations,
+		timeout:        time.Duration(cfg.Agents.Defaults.Timeout) * time.Second,
 		sessions:       sessionsManager,
 		state:          stateManager,
 		contextBuilder: contextBuilder,
@@ -926,7 +928,11 @@ func formatToolsForLog(tools []providers.ToolDefinition) string {
 
 // summarizeSession summarizes the conversation history for a session.
 func (al *AgentLoop) summarizeSession(sessionKey string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	timeout := al.timeout
+	if timeout == 0 {
+		timeout = 120 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	history := al.sessions.GetHistory(sessionKey)

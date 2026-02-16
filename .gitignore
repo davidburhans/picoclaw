@@ -43,5 +43,13 @@ tasks/
 .vscode/
 .idea/
 
+
 # Added by goreleaser init:
 dist/
+
+# Local runtime artifacts
+build.log
+workspace/
+
+# Burhandler
+.burhandler/

@@ -47,6 +47,8 @@ var (
 	gitCommit string
 	buildTime string
 	goVersion string
+
+	customConfigPath string
 )
 
 const logo = "🦞"
@@ -118,12 +120,29 @@ func copyDirectory(src, dst string) error {
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	// Parse global flags manually to support both global and command-specific flags
+	rawArgs := os.Args[1:]
+	var filteredArgs []string
+	for i := 0; i < len(rawArgs); i++ {
+		arg := rawArgs[i]
+		if arg == "-c" || arg == "--config" {
+			if i+1 < len(rawArgs) {
+				customConfigPath = rawArgs[i+1]
+				i++
+			}
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	if len(filteredArgs) < 1 {
 		printHelp()
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
+	command := filteredArgs[0]
+	// Update os.Args for compatibility with subcommands that use it
+	os.Args = append([]string{os.Args[0]}, filteredArgs...)
 
 	switch command {
 	case "onboard":
@@ -200,7 +219,10 @@ func main() {
 
 func printHelp() {
 	fmt.Printf("%s picoclaw - Personal AI Assistant v%s\n\n", logo, version)
-	fmt.Println("Usage: picoclaw <command>")
+	fmt.Println("Usage: picoclaw [global options] <command> [command options]")
+	fmt.Println()
+	fmt.Println("Global Options:")
+	fmt.Println("  -c, --config <path>   Path to config file")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  onboard     Initialize picoclaw configuration and workspace")
@@ -216,31 +238,45 @@ func printHelp() {
 
 func onboard() {
 	configPath := getConfigPath()
+	var cfg *config.Config
+	var err error
 
-	if _, err := os.Stat(configPath); err == nil {
+	if _, errStat := os.Stat(configPath); errStat == nil {
 		fmt.Printf("Config already exists at %s\n", configPath)
-		fmt.Print("Overwrite? (y/n): ")
+		fmt.Print("Overwrite config with default? (y/n) [n to keep existing and just init workspace]: ")
 		var response string
 		fmt.Scanln(&response)
-		if response != "y" {
-			fmt.Println("Aborted.")
-			return
+		if response == "y" {
+			cfg = config.DefaultConfig()
+			if err := config.SaveConfig(configPath, cfg); err != nil {
+				fmt.Printf("Error saving config: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("✓ Config overwritten with defaults.")
+		} else {
+			cfg, err = config.LoadConfig(configPath)
+			if err != nil {
+				fmt.Printf("Error loading existing config: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("✓ Using existing config.")
 		}
-	}
-
-	cfg := config.DefaultConfig()
-	if err := config.SaveConfig(configPath, cfg); err != nil {
-		fmt.Printf("Error saving config: %v\n", err)
-		os.Exit(1)
+	} else {
+		cfg = config.DefaultConfig()
+		if err := config.SaveConfig(configPath, cfg); err != nil {
+			fmt.Printf("Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ Created default config at %s\n", configPath)
 	}
 
 	workspace := cfg.WorkspacePath()
+	fmt.Printf("Initializing workspace at %s...\n", workspace)
 	createWorkspaceTemplates(workspace, cfg.Agents.Defaults.Name)
 
-	fmt.Printf("%s %s is ready!\n", logo, cfg.Agents.Defaults.Name)
+	fmt.Printf("\n%s %s is ready!\n", logo, cfg.Agents.Defaults.Name)
 	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Add your API key to", configPath)
-	fmt.Println("     Get one at: https://openrouter.ai/keys")
+	fmt.Printf("  1. Review your API keys in %s\n", configPath)
 	fmt.Println("  2. Chat: picoclaw agent -m \"Hello!\"")
 }
 
@@ -1138,8 +1174,28 @@ func authStatusCmd() {
 }
 
 func getConfigPath() string {
+	if customConfigPath != "" {
+		return expandHome(customConfigPath)
+	}
+	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
+		return filepath.Join(expandHome(home), "config.json")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".picoclaw", "config.json")
+}
+
+func expandHome(path string) string {
+	if path == "" {
+		return path
+	}
+	if path[0] == '~' {
+		home, _ := os.UserHomeDir()
+		if len(path) > 1 && (path[1] == '/' || path[1] == '\\') {
+			return filepath.Join(home, path[2:])
+		}
+		return home
+	}
+	return path
 }
 
 func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string) *cron.CronService {

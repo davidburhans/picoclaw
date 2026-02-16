@@ -19,6 +19,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/auth"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 type HTTPProvider struct {
@@ -27,9 +28,12 @@ type HTTPProvider struct {
 	httpClient *http.Client
 }
 
-func NewHTTPProvider(apiKey, apiBase, proxy string) *HTTPProvider {
+func NewHTTPProvider(apiKey, apiBase, proxy string, timeout time.Duration) *HTTPProvider {
+	if timeout == 0 {
+		timeout = 120 * time.Second
+	}
 	client := &http.Client{
-		Timeout: 120 * time.Second,
+		Timeout: timeout,
 	}
 
 	if proxy != "" {
@@ -40,6 +44,12 @@ func NewHTTPProvider(apiKey, apiBase, proxy string) *HTTPProvider {
 			}
 		}
 	}
+
+	logger.InfoCF("http_provider", "Created HTTP provider", map[string]interface{}{
+		"api_base": strings.TrimRight(apiBase, "/"),
+		"timeout":  timeout.String(),
+		"proxy":    proxy,
+	})
 
 	return &HTTPProvider{
 		apiKey:     apiKey,
@@ -104,6 +114,11 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
+
+	logger.DebugCF("http_provider", "Sending LLM request", map[string]interface{}{
+		"model":   model,
+		"timeout": p.httpClient.Timeout.String(),
+	})
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -429,5 +444,5 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		return nil, fmt.Errorf("no API base configured for provider (model: %s)", model)
 	}
 
-	return NewHTTPProvider(apiKey, apiBase, proxy), nil
+	return NewHTTPProvider(apiKey, apiBase, proxy, time.Duration(cfg.Agents.Defaults.Timeout)*time.Second), nil
 }
