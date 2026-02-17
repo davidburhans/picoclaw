@@ -161,6 +161,13 @@ func (c *MCPClient) CallTool(ctx context.Context, name string, args map[string]i
 
 // Close terminates the MCP server connection
 func (c *MCPClient) Close() error {
+	c.mu.Lock()
+	for id, ch := range c.pendingReqs {
+		close(ch)
+		delete(c.pendingReqs, id)
+	}
+	c.mu.Unlock()
+
 	if c.cmd != nil && c.cmd.Process != nil {
 		return c.cmd.Process.Kill()
 	}
@@ -238,6 +245,7 @@ func (c *MCPClient) readLoop() {
 						"error":  err.Error(),
 					})
 			}
+			c.Close()
 			return
 		}
 		
@@ -284,7 +292,7 @@ func (c *MCPClient) readLoop() {
 func (c *MCPClient) logStderr() {
 	scanner := bufio.NewScanner(c.stderr)
 	for scanner.Scan() {
-		logger.DebugCF("mcp", "MCP server stderr",
+		logger.InfoCF("mcp", "MCP server stderr",
 			map[string]interface{}{
 				"server": c.name,
 				"line":   scanner.Text(),
