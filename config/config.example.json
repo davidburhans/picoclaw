@@ -15,7 +15,9 @@
       "enabled": false,
       "token": "YOUR_TELEGRAM_BOT_TOKEN",
       "proxy": "",
-      "allow_from": ["YOUR_USER_ID"]
+      "allow_from": [
+        "YOUR_USER_ID"
+      ]
     },
     "discord": {
       "enabled": false,
@@ -108,6 +110,10 @@
     "moonshot": {
       "api_key": "sk-xxx",
       "api_base": ""
+    },
+    "ollama": {
+      "api_key": "",
+      "api_base": "http://localhost:11434/v1"
     }
   },
   "tools": {
@@ -117,6 +123,7 @@
         "api_key": "YOUR_BRAVE_API_KEY",
         "max_results": 5
       },
+<<<<<<< HEAD
       "duckduckgo": {
         "enabled": true,
         "max_results": 5
@@ -124,8 +131,16 @@
       "searxng": {
         "enabled": false,
         "base_url": "http://localhost:8080",
+=======
+      "perplexity": {
+        "enabled": false,
+        "api_key": "pplx-xxx",
+>>>>>>> 920e30a241313544ad735f78e0d5590f1a0b9c1f
         "max_results": 5
       }
+    },
+    "cron": {
+      "exec_timeout_minutes": 5
     }
   },
   "heartbeat": {

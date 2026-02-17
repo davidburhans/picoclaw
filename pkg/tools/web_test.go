@@ -173,17 +173,17 @@ func TestWebTool_WebFetch_Truncation(t *testing.T) {
 	}
 }
 
-// TestWebTool_WebSearch_NoApiKey verifies that nil is returned when no provider is configured
+// TestWebTool_WebSearch_NoApiKey verifies that no tool is created when API key is missing
 func TestWebTool_WebSearch_NoApiKey(t *testing.T) {
-	tool := NewWebSearchTool(WebSearchToolOptions{
-		BraveAPIKey:     "",
-		BraveMaxResults: 5,
-		BraveEnabled:    false, // Explicitly disabled
-	})
-
-	// Should return nil when no provider is enabled
+	tool := NewWebSearchTool(WebSearchToolOptions{BraveEnabled: true, BraveAPIKey: ""})
 	if tool != nil {
-		t.Errorf("Expected nil when no search provider is configured")
+		t.Errorf("Expected nil tool when Brave API key is empty")
+	}
+
+	// Also nil when nothing is enabled
+	tool = NewWebSearchTool(WebSearchToolOptions{})
+	if tool != nil {
+		t.Errorf("Expected nil tool when no provider is enabled")
 	}
 }
 
