@@ -218,7 +218,8 @@ picoclaw onboard
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "model": "glm-4.7",
+      "provider": "openrouter",   // 当前提供商
+      "model": "",                // 如果为空，则使用特定提供商的模型
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
@@ -226,6 +227,7 @@ picoclaw onboard
   },
   "providers": {
     "openrouter": {
+      "model": "anthropic/claude-3.5-sonnet", // 可选的特定提供商模型
       "api_key": "xxx",
       "api_base": "https://openrouter.ai/api/v1"
     }

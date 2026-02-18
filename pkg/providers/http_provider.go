@@ -244,6 +244,39 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 
 	// First, try to use explicitly configured provider
 	if providerName != "" {
+		// If agent model is empty, use the model from the provider configuration
+		if model == "" {
+			switch providerName {
+			case "groq":
+				model = cfg.Providers.Groq.Model
+			case "openai", "gpt":
+				model = cfg.Providers.OpenAI.Model
+			case "anthropic", "claude":
+				model = cfg.Providers.Anthropic.Model
+			case "openrouter":
+				model = cfg.Providers.OpenRouter.Model
+			case "zhipu", "glm":
+				model = cfg.Providers.Zhipu.Model
+			case "gemini", "google":
+				model = cfg.Providers.Gemini.Model
+			case "vllm":
+				model = cfg.Providers.VLLM.Model
+			case "shengsuanyun":
+				model = cfg.Providers.ShengSuanYun.Model
+			case "deepseek":
+				model = cfg.Providers.DeepSeek.Model
+			case "moonshot":
+				model = cfg.Providers.Moonshot.Model
+			case "nvidia":
+				model = cfg.Providers.Nvidia.Model
+			case "ollama":
+				model = cfg.Providers.Ollama.Model
+			case "github_copilot", "copilot":
+				model = cfg.Providers.GitHubCopilot.Model
+			}
+			lowerModel = strings.ToLower(model)
+		}
+
 		switch providerName {
 		case "groq":
 			if cfg.Providers.Groq.APIKey != "" {

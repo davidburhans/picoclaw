@@ -177,7 +177,8 @@ picoclaw onboard
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "model": "glm-4.7",
+      "provider": "openrouter",   // 現在のプロバイダー
+      "model": "",                // 空の場合、プロバイダー固有のモデルが使用されます
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
@@ -185,6 +186,7 @@ picoclaw onboard
   },
   "providers": {
     "openrouter": {
+      "model": "anthropic/claude-3.5-sonnet", // オプションのプロバイダー固有モデル
       "api_key": "xxx",
       "api_base": "https://openrouter.ai/api/v1"
     }

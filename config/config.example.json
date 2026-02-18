@@ -81,10 +81,12 @@
   },
   "providers": {
     "anthropic": {
+      "model": "claude-3-5-sonnet-latest",
       "api_key": "",
       "api_base": ""
     },
     "openai": {
+      "model": "gpt-4o",
       "api_key": "",
       "api_base": ""
     },
@@ -118,6 +120,7 @@
       "api_base": ""
     },
     "ollama": {
+      "model": "llama3.2",
       "api_key": "",
       "api_base": "http://localhost:11434/v1"
     }
