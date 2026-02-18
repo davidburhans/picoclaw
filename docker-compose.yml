@@ -38,6 +38,8 @@ services:
       # MCP server files
       - ./mcp:/mcp:ro
     command: ["gateway"]
+    environment:
+      - TZ=America/Chicago
 
 volumes:
   picoclaw-workspace:
