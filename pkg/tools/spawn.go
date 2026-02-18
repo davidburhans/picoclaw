@@ -45,6 +45,15 @@ func (t *SpawnTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "Optional short label for the task (for display)",
 			},
+			"role": map[string]interface{}{
+				"type":        "string",
+				"description": "The persona for the sub-agent, e.g. 'Senior Go Engineer', 'Security Auditor'. Shapes behavior.",
+			},
+			"context_files": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "File paths to read and inject as context before the task starts.",
+			},
 		},
 		"required": []string{"task"},
 	}
@@ -62,13 +71,22 @@ func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *T
 	}
 
 	label, _ := args["label"].(string)
+	role, _ := args["role"].(string)
+	var contextFiles []string
+	if cf, ok := args["context_files"].([]interface{}); ok {
+		for _, f := range cf {
+			if s, ok := f.(string); ok {
+				contextFiles = append(contextFiles, s)
+			}
+		}
+	}
 
 	if t.manager == nil {
 		return ErrorResult("Subagent manager not configured")
 	}
 
 	// Pass callback to manager for async completion notification
-	result, err := t.manager.Spawn(ctx, task, label, t.originChannel, t.originChatID, t.callback)
+	result, err := t.manager.Spawn(ctx, task, label, role, contextFiles, t.originChannel, t.originChatID, t.callback)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to spawn subagent: %v", err))
 	}

@@ -13,7 +13,19 @@ import (
 type MockLLMProvider struct{}
 
 func (m *MockLLMProvider) Chat(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, options map[string]interface{}) (*providers.LLMResponse, error) {
-	// Find the last user message to generate a response
+	// Specialized mock responses for testing
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			if strings.Contains(msg.Content, "ROLE: Security Auditor") {
+				return &providers.LLMResponse{Content: "Security audit complete. No issues found."}, nil
+			}
+		}
+		if msg.Role == "user" && strings.Contains(msg.Content, "### test.go") {
+			return &providers.LLMResponse{Content: "Analyzed test.go context."}, nil
+		}
+	}
+
+	// Default fallback
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
 			return &providers.LLMResponse{
@@ -40,7 +52,7 @@ func (m *MockLLMProvider) GetContextWindow() int {
 func TestSubagentTool_Name(t *testing.T) {
 	provider := &MockLLMProvider{}
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	if tool.Name() != "subagent" {
 		t.Errorf("Expected name 'subagent', got '%s'", tool.Name())
@@ -51,7 +63,7 @@ func TestSubagentTool_Name(t *testing.T) {
 func TestSubagentTool_Description(t *testing.T) {
 	provider := &MockLLMProvider{}
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	desc := tool.Description()
 	if desc == "" {
@@ -66,7 +78,7 @@ func TestSubagentTool_Description(t *testing.T) {
 func TestSubagentTool_Parameters(t *testing.T) {
 	provider := &MockLLMProvider{}
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	params := tool.Parameters()
 	if params == nil {
@@ -116,7 +128,7 @@ func TestSubagentTool_Parameters(t *testing.T) {
 func TestSubagentTool_SetContext(t *testing.T) {
 	provider := &MockLLMProvider{}
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	tool.SetContext("test-channel", "test-chat")
 
@@ -130,7 +142,7 @@ func TestSubagentTool_Execute_Success(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 	tool.SetContext("telegram", "chat-123")
 
 	ctx := context.Background()
@@ -186,7 +198,7 @@ func TestSubagentTool_Execute_NoLabel(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -209,7 +221,7 @@ func TestSubagentTool_Execute_NoLabel(t *testing.T) {
 func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 	provider := &MockLLMProvider{}
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -236,7 +248,7 @@ func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 
 // TestSubagentTool_Execute_NilManager tests error handling for nil manager
 func TestSubagentTool_Execute_NilManager(t *testing.T) {
-	tool := NewSubagentTool(nil)
+	tool := NewSubagentTool(nil, "/tmp/test", false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -260,7 +272,7 @@ func TestSubagentTool_Execute_ContextPassing(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	// Set context
 	channel := "test-channel"
@@ -289,7 +301,7 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
 
 	ctx := context.Background()
 
@@ -311,5 +323,49 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	// ForLLM should have full content
 	if !strings.Contains(result.ForLLM, longTask[:50]) {
 		t.Error("ForLLM should contain reference to original task")
+	}
+}
+
+func TestSubagentTool_RoleInjection(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
+
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"task": "Review security",
+		"role": "Security Auditor",
+	}
+
+	result := tool.Execute(ctx, args)
+	if result.IsError {
+		t.Fatalf("Execute failed: %v", result.ForLLM)
+	}
+
+	if !strings.Contains(result.ForLLM, "Security audit complete") {
+		t.Errorf("Expected role-specific response, got: %s", result.ForLLM)
+	}
+}
+
+func TestSubagentTool_DepthLimit(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager.SetMaxDepth(2)
+	tool := NewSubagentTool(manager, "/tmp/test", false)
+
+	ctx := context.Background()
+	// Simulate depth 2 already reached
+	ctx = withSubagentDepth(ctx, 2)
+
+	args := map[string]interface{}{
+		"task": "Nested task",
+	}
+
+	result := tool.Execute(ctx, args)
+	if !result.IsError {
+		t.Error("Expected error due to depth limit, but got success")
+	}
+	if !strings.Contains(result.ForLLM, "Maximum sub-agent nesting depth") {
+		t.Errorf("Expected depth limit error message, got: %s", result.ForLLM)
 	}
 }

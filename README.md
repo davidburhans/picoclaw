@@ -609,29 +609,27 @@ PicoClaw can perform periodic tasks automatically. Create a `HEARTBEAT.md` file 
 
 The agent will read this file every 30 minutes (configurable) and execute any tasks using available tools.
 
-#### Async Tasks with Spawn
+#### Supervisor Pattern & Sub-agents
 
-For long-running tasks (web search, API calls), use the `spawn` tool to create a **subagent**:
+PicoClaw supports a powerful **Supervisor Pattern** for delegating complex work. Use the `subagent` (sync) or `spawn` (async) tools.
+
+**Key capabilities:**
+
+| Feature | Description |
+|---------|-------------|
+| **Persona Injection** | Use `role` to give sub-agents specific expertise (e.g. "Senior Dev"). |
+| **Context Injection** | Use `context_files` to provide code or data files as background. |
+| **Recursion Safety** | Built-in depth limiting (max 5) prevents infinite agent loops. |
+| **Task Completion** | Agents use the `report_completion` tool to return final results. |
+
+**Example Heartbeat Task:**
 
 ```markdown
 # Periodic Tasks
 
-## Quick Tasks (respond directly)
-- Report current time
-
-## Long Tasks (use spawn for async)
-- Search the web for AI news and summarize
-- Check email and report important messages
+- Search the web for AI news using role="Tech Journalist" and context_files=["trends.txt"]
+- Call report_completion with a 3-bullet summary of your findings.
 ```
-
-**Key behaviors:**
-
-| Feature | Description |
-|---------|-------------|
-| **spawn** | Creates async subagent, doesn't block heartbeat |
-| **Independent context** | Subagent has its own context, no session history |
-| **message tool** | Subagent communicates with user directly via message tool |
-| **Non-blocking** | After spawning, heartbeat continues to next task |
 
 #### How Subagent Communication Works
 
@@ -658,6 +656,16 @@ The subagent has access to tools (message, web_search, etc.) and can communicate
   "heartbeat": {
     "enabled": true,
     "interval": 30
+  },
+  "agents": {
+    "defaults": {
+      "subagent": {
+        "max_iterations": 10,
+        "max_depth": 5,
+        "max_tokens": 4096,
+        "temperature": 0.7
+      }
+    }
   }
 }
 ```

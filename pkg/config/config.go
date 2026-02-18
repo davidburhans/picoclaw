@@ -67,8 +67,16 @@ type AgentDefaults struct {
 	Model               string  `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
 	MaxTokens           int     `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature         float64 `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations   int     `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	Timeout             int     `json:"timeout" env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT"` // seconds
+	MaxToolIterations   int            `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	Timeout             int            `json:"timeout" env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT"` // seconds
+	Subagent            SubagentConfig `json:"subagent"`
+}
+
+type SubagentConfig struct {
+	MaxIterations int     `json:"max_iterations" env:"PICOCLAW_SUBAGENT_MAX_ITERATIONS"`
+	MaxTokens     int     `json:"max_tokens" env:"PICOCLAW_SUBAGENT_MAX_TOKENS"`
+	Temperature   float64 `json:"temperature" env:"PICOCLAW_SUBAGENT_TEMPERATURE"`
+	MaxDepth      int     `json:"max_depth" env:"PICOCLAW_SUBAGENT_MAX_DEPTH"`
 }
 
 type ChannelsConfig struct {
@@ -261,6 +269,12 @@ func DefaultConfig() *Config {
 				Temperature:         0.7,
 				MaxToolIterations:   20,
 				Timeout:             120, // default 2 minutes
+				Subagent: SubagentConfig{
+					MaxIterations: 10,
+					MaxTokens:     8192,
+					Temperature:   0.7,
+					MaxDepth:      5,
+				},
 			},
 		},
 		Channels: ChannelsConfig{

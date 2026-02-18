@@ -23,6 +23,7 @@ type ToolLoopConfig struct {
 	Tools         *ToolRegistry
 	MaxIterations int
 	LLMOptions    map[string]any
+	StopTool      string // If set, break loop when this tool is called
 }
 
 // ToolLoopResult contains the result of running the tool loop.
@@ -144,6 +145,15 @@ func RunToolLoop(ctx context.Context, config ToolLoopConfig, messages []provider
 				ToolCallID: tc.ID,
 			}
 			messages = append(messages, toolResultMsg)
+
+			// Check if this tool is the stop tool
+			if config.StopTool != "" && tc.Name == config.StopTool {
+				// Stop processing more tool calls in this turn and break the main loop
+				return &ToolLoopResult{
+					Content:    contentForLLM,
+					Iterations: iteration,
+				}, nil
+			}
 		}
 	}
 

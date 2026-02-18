@@ -162,8 +162,15 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 
 	// Create subagent manager with its own tool registry
 	subagentManager := tools.NewSubagentManager(provider, cfg.Agents.Defaults.Model, workspace, msgBus)
+	subagentManager.SetMaxIterations(cfg.Agents.Defaults.Subagent.MaxIterations)
+	subagentManager.SetMaxDepth(cfg.Agents.Defaults.Subagent.MaxDepth)
+	subagentManager.SetMaxTokens(cfg.Agents.Defaults.Subagent.MaxTokens)
+	subagentManager.SetTemperature(cfg.Agents.Defaults.Subagent.Temperature)
+
 	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus)
-	// Subagent doesn't need spawn/subagent tools to avoid recursion
+	// Subagent doesn't need spawn/subagent tools to avoid recursion by default
+	// but can use report_completion to signal success.
+	subagentTools.Register(&tools.ReportCompletionTool{})
 	subagentManager.SetTools(subagentTools)
 
 	// Register spawn tool (for main agent)
@@ -171,7 +178,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	toolsRegistry.Register(spawnTool)
 
 	// Register subagent tool (synchronous execution)
-	subagentTool := tools.NewSubagentTool(subagentManager)
+	subagentTool := tools.NewSubagentTool(subagentManager, workspace, restrict)
 	toolsRegistry.Register(subagentTool)
 
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))

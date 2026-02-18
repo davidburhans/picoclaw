@@ -3,6 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +33,9 @@ type SubagentManager struct {
 	workspace     string
 	tools         *ToolRegistry
 	maxIterations int
+	maxDepth      int
+	maxTokens     int
+	temperature   float64
 	nextID        int
 }
 
@@ -42,8 +48,35 @@ func NewSubagentManager(provider providers.LLMProvider, defaultModel, workspace 
 		workspace:     workspace,
 		tools:         NewToolRegistry(),
 		maxIterations: 10,
+		maxDepth:      5,
+		maxTokens:     4096,
+		temperature:   0.7,
 		nextID:        1,
 	}
+}
+
+func (sm *SubagentManager) SetMaxIterations(n int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.maxIterations = n
+}
+
+func (sm *SubagentManager) SetMaxDepth(depth int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.maxDepth = depth
+}
+
+func (sm *SubagentManager) SetMaxTokens(tokens int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.maxTokens = tokens
+}
+
+func (sm *SubagentManager) SetTemperature(temp float64) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.temperature = temp
 }
 
 // SetTools sets the tool registry for subagent execution.
@@ -61,7 +94,7 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 	sm.tools.Register(tool)
 }
 
-func (sm *SubagentManager) Spawn(ctx context.Context, task, label, originChannel, originChatID string, callback AsyncCallback) (string, error) {
+func (sm *SubagentManager) Spawn(ctx context.Context, task, label, role string, contextFiles []string, originChannel, originChatID string, callback AsyncCallback) (string, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -79,8 +112,15 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label, originChannel
 	}
 	sm.tasks[taskID] = subagentTask
 
+	// Check depth limit
+	currentDepth := getSubagentDepth(ctx)
+	if currentDepth >= sm.maxDepth {
+		return "", fmt.Errorf("maximum sub-agent nesting depth (%d) exceeded", sm.maxDepth)
+	}
+	ctx = withSubagentDepth(ctx, currentDepth+1)
+
 	// Start task in background with context cancellation support
-	go sm.runTask(ctx, subagentTask, callback)
+	go sm.runTask(ctx, subagentTask, role, contextFiles, callback)
 
 	if label != "" {
 		return fmt.Sprintf("Spawned subagent '%s' for task: %s", label, task), nil
@@ -88,14 +128,18 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label, originChannel
 	return fmt.Sprintf("Spawned subagent for task: %s", task), nil
 }
 
-func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, callback AsyncCallback) {
+func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, role string, contextFiles []string, callback AsyncCallback) {
 	task.Status = "running"
 	task.Created = time.Now().UnixMilli()
 
 	// Build system prompt for subagent
-	systemPrompt := `You are a subagent. Complete the given task independently and report the result.
-You have access to tools - use them as needed to complete your task.
-After completing the task, provide a clear summary of what was done.`
+	systemPrompt := buildSubagentPrompt(role, task.Task)
+
+	// Inject context files
+	initialMessage := task.Task
+	if len(contextFiles) > 0 {
+		initialMessage = sm.injectContextFiles(task.Task, contextFiles)
+	}
 
 	messages := []providers.Message{
 		{
@@ -104,7 +148,7 @@ After completing the task, provide a clear summary of what was done.`
 		},
 		{
 			Role:    "user",
-			Content: task.Task,
+			Content: initialMessage,
 		},
 	}
 
@@ -123,6 +167,8 @@ After completing the task, provide a clear summary of what was done.`
 	sm.mu.RLock()
 	tools := sm.tools
 	maxIter := sm.maxIterations
+	maxTokens := sm.maxTokens
+	temperature := sm.temperature
 	sm.mu.RUnlock()
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
@@ -130,9 +176,10 @@ After completing the task, provide a clear summary of what was done.`
 		Model:         sm.defaultModel,
 		Tools:         tools,
 		MaxIterations: maxIter,
+		StopTool:      "report_completion",
 		LLMOptions: map[string]any{
-			"max_tokens":  4096,
-			"temperature": 0.7,
+			"max_tokens":  maxTokens,
+			"temperature": temperature,
 		},
 	}, messages, task.OriginChannel, task.OriginChatID)
 
@@ -212,13 +259,17 @@ type SubagentTool struct {
 	manager       *SubagentManager
 	originChannel string
 	originChatID  string
+	workspace     string
+	restrict      bool
 }
 
-func NewSubagentTool(manager *SubagentManager) *SubagentTool {
+func NewSubagentTool(manager *SubagentManager, workspace string, restrict bool) *SubagentTool {
 	return &SubagentTool{
 		manager:       manager,
 		originChannel: "cli",
 		originChatID:  "direct",
+		workspace:     workspace,
+		restrict:      restrict,
 	}
 }
 
@@ -242,6 +293,15 @@ func (t *SubagentTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "Optional short label for the task (for display)",
 			},
+			"role": map[string]interface{}{
+				"type":        "string",
+				"description": "The persona for the sub-agent, e.g. 'Senior Go Engineer', 'Security Auditor'. Shapes behavior.",
+			},
+			"context_files": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "File paths to read and inject as context before the task starts.",
+			},
 		},
 		"required": []string{"task"},
 	}
@@ -259,20 +319,45 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 
 	label, _ := args["label"].(string)
+	role, _ := args["role"].(string)
+	var contextFiles []string
+	if cf, ok := args["context_files"].([]interface{}); ok {
+		for _, f := range cf {
+			if s, ok := f.(string); ok {
+				contextFiles = append(contextFiles, s)
+			}
+		}
+	}
 
 	if t.manager == nil {
 		return ErrorResult("Subagent manager not configured").WithError(fmt.Errorf("manager is nil"))
+	}
+
+	// Check depth limit
+	currentDepth := getSubagentDepth(ctx)
+	if currentDepth >= t.manager.maxDepth {
+		return ErrorResult(fmt.Sprintf("Maximum sub-agent nesting depth (%d) exceeded", t.manager.maxDepth))
+	}
+	ctx = withSubagentDepth(ctx, currentDepth+1)
+
+	// Build subagent prompt
+	systemPrompt := buildSubagentPrompt(role, task)
+
+	// Inject context files
+	initialMessage := task
+	if len(contextFiles) > 0 {
+		initialMessage = t.manager.injectContextFiles(task, contextFiles)
 	}
 
 	// Build messages for subagent
 	messages := []providers.Message{
 		{
 			Role:    "system",
-			Content: "You are a subagent. Complete the given task independently and provide a clear, concise result.",
+			Content: systemPrompt,
 		},
 		{
 			Role:    "user",
-			Content: task,
+			Content: initialMessage,
 		},
 	}
 
@@ -281,6 +366,8 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	sm.mu.RLock()
 	tools := sm.tools
 	maxIter := sm.maxIterations
+	maxTokens := sm.maxTokens
+	temperature := sm.temperature
 	sm.mu.RUnlock()
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
@@ -288,9 +375,10 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 		Model:         sm.defaultModel,
 		Tools:         tools,
 		MaxIterations: maxIter,
+		StopTool:      "report_completion",
 		LLMOptions: map[string]any{
-			"max_tokens":  4096,
-			"temperature": 0.7,
+			"max_tokens":  maxTokens,
+			"temperature": temperature,
 		},
 	}, messages, t.originChannel, t.originChatID)
 
@@ -320,4 +408,66 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 		IsError: false,
 		Async:   false,
 	}
+}
+
+func buildSubagentPrompt(role, goal string) string {
+	if role == "" {
+		role = "a capable worker"
+	}
+	return fmt.Sprintf(`You are a specialized sub-agent.
+ROLE: %s
+OBJECTIVE: %s
+
+RULES:
+1. You have access to tools — use them as needed.
+2. Execute autonomously. Do NOT ask for clarification.
+3. When finished, call the 'report_completion' tool with your final summary.
+4. Stay focused on the objective.`, role, goal)
+}
+
+func (sm *SubagentManager) injectContextFiles(task string, files []string) string {
+	var sb strings.Builder
+	sb.WriteString(task)
+	sb.WriteString("\n\n--- Context Files ---\n")
+	for _, f := range files {
+		absPath := f
+		if !filepath.IsAbs(f) {
+			absPath = filepath.Join(sm.workspace, f)
+		}
+
+		// Security check
+		cleanPath := filepath.Clean(absPath)
+		cleanWorkspace := filepath.Clean(sm.workspace)
+		if !strings.HasPrefix(cleanPath, cleanWorkspace) {
+			sb.WriteString(fmt.Sprintf("\n[%s]: (error: access denied - path outside workspace)\n", f))
+			continue
+		}
+
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("\n[%s]: (error reading: %v)\n", f, err))
+		} else {
+			content := string(data)
+			if len(content) > 10000 {
+				content = content[:10000] + "\n... (truncated)"
+			}
+			sb.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", f, content))
+		}
+	}
+	return sb.String()
+}
+
+type contextKey string
+
+const subagentDepthKey contextKey = "subagent_depth"
+
+func getSubagentDepth(ctx context.Context) int {
+	if v, ok := ctx.Value(subagentDepthKey).(int); ok {
+		return v
+	}
+	return 0
+}
+
+func withSubagentDepth(ctx context.Context, depth int) context.Context {
+	return context.WithValue(ctx, subagentDepthKey, depth)
 }
