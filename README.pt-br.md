@@ -705,6 +705,7 @@ O subagente tem acesso as ferramentas (message, web_search, etc.) e pode se comu
 | `deepseek` (Em teste) | LLM (DeepSeek direto) | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq` | LLM + **Transcricao de voz** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `schedule` | Agendamento de modelos baseado em tempo | (Nenhum) |
+| `overflow` | Roteamento de fallback (Fallback Routing) | (No config.json) |
 
 #### Opções Comuns de Provedor
 

@@ -811,6 +811,7 @@ docker compose --profile gateway up
 | `deepseek(To be tested)`   | LLM (DeepSeek direct)                   | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq`                     | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com)           |
 | `schedule`                 | Meta-provider (time-based routing)      | (Config in `config.json`)                              |
+| `overflow`                 | Meta-provider (fallback routing)        | (Config in `config.json`)                              |
 
 #### Common Provider Options
 

@@ -186,6 +186,16 @@
           "model": "llama3-70b-8192"
         }
       }
+    },
+    // Overflow Provider Configuration
+    // Allows chaining providers for failover when concurrency limits are reached.
+    "overflow": {
+      "default": {
+        "list": ["ollama/llama3", "openrouter"]
+      },
+      "premium": {
+        "list": ["openai", "anthropic"]
+      }
     }
   },
   "tools": {

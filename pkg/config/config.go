@@ -206,9 +206,58 @@ type ProvidersConfig struct {
 	DeepSeek      ProviderEntries `json:"deepseek"`
 	GitHubCopilot ProviderEntries `json:"github_copilot"`
 	Schedule      ScheduleEntries `json:"schedule,omitempty"`
+	Overflow      OverflowEntries `json:"overflow,omitempty"`
 }
 
 type ScheduleEntries map[string]ScheduleConfig
+
+type OverflowEntries map[string]OverflowConfig
+
+type OverflowConfig struct {
+	List []string `json:"list"`
+}
+
+func (o *OverflowEntries) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a map (new format)
+	var m map[string]OverflowConfig
+	if err := json.Unmarshal(data, &m); err == nil {
+		// Heuristic: if it's a map, check if keys are named instances or OverflowConfig fields.
+		isOldFormat := false
+		for k := range m {
+			switch strings.ToLower(k) {
+			case "list":
+				isOldFormat = true
+			}
+			if isOldFormat {
+				break
+			}
+		}
+
+		if !isOldFormat && len(m) > 0 {
+			*o = m
+			return nil
+		}
+	}
+
+	// Try to unmarshal as a single config (old format/default)
+	var single OverflowConfig
+	if err := json.Unmarshal(data, &single); err != nil {
+		return err
+	}
+	*o = OverflowEntries{"": single}
+	return nil
+}
+
+func (o OverflowEntries) MarshalJSON() ([]byte, error) {
+	// If it only contains the default entry, marshal as a single object
+	if len(o) == 1 {
+		if single, ok := o[""]; ok {
+			return json.Marshal(single)
+		}
+	}
+	// Otherwise marshal as a map
+	return json.Marshal(map[string]OverflowConfig(o))
+}
 
 func (s *ScheduleEntries) UnmarshalJSON(data []byte) error {
 	// Try to unmarshal as a map (new format)

@@ -580,6 +580,7 @@ Agent 读取 HEARTBEAT.md
 | `deepseek(待测试)` | LLM (DeepSeek 直连) | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq` | LLM + **语音转录** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `schedule` | 根据时间调度不同模型 | (无) |
+| `overflow` | 级联回退 (Fallback Routing) | (配置文件中) |
 
 #### 通用提供商选项
 

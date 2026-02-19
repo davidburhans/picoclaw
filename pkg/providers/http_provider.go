@@ -23,6 +23,7 @@ import (
 )
 
 type HTTPProvider struct {
+	id                string // Unique ID for concurrency tracking
 	apiKey            string
 	apiBase           string
 	httpClient        *http.Client
@@ -34,7 +35,7 @@ type HTTPProvider struct {
 	maxConcurrentSessions int
 }
 
-func NewHTTPProvider(apiKey, apiBase, proxy string, timeoutSec int, model string, maxTokens int, temperature float64, maxToolIterations int, maxConcurrentSessions int) *HTTPProvider {
+func NewHTTPProvider(id, apiKey, apiBase, proxy string, timeoutSec int, model string, maxTokens int, temperature float64, maxToolIterations int, maxConcurrentSessions int) *HTTPProvider {
 	timeout := time.Duration(timeoutSec) * time.Second
 	if timeout == 0 {
 		timeout = 120 * time.Second
@@ -53,6 +54,7 @@ func NewHTTPProvider(apiKey, apiBase, proxy string, timeoutSec int, model string
 	}
 
 	logger.InfoCF("http_provider", "Created HTTP provider", map[string]interface{}{
+		"id":       id,
 		"api_base": strings.TrimRight(apiBase, "/"),
 		"timeout":  timeout.String(),
 		"proxy":    proxy,
@@ -60,6 +62,7 @@ func NewHTTPProvider(apiKey, apiBase, proxy string, timeoutSec int, model string
 	})
 
 	return &HTTPProvider{
+		id:                id,
 		apiKey:            apiKey,
 		apiBase:           strings.TrimRight(apiBase, "/"),
 		httpClient:        client,
@@ -73,6 +76,18 @@ func NewHTTPProvider(apiKey, apiBase, proxy string, timeoutSec int, model string
 }
 
 func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
+	// Acquire concurrency slot
+	if p.id != "" && p.maxConcurrentSessions > 0 {
+		if !GlobalConcurrencyTracker().Acquire(p.id, p.maxConcurrentSessions) {
+			logger.WarnCF("http_provider", "Concurrency limit reached", map[string]interface{}{
+				"id":  p.id,
+				"max": p.maxConcurrentSessions,
+			})
+			return nil, fmt.Errorf("%w for provider %s", ErrConcurrencyLimit, p.id)
+		}
+		defer GlobalConcurrencyTracker().Release(p.id)
+	}
+
 	if p.apiBase == "" {
 		return nil, fmt.Errorf("API base not configured")
 	}
@@ -336,6 +351,16 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	}
 
 	lowerModel := strings.ToLower(model)
+	
+	// Generate unique ID for this provider instance
+	providerID := providerStr
+	if providerID == "" {
+		providerID = "default"
+	}
+	// Append model if handled by default fallbacks to differentiate
+	if !found {
+		providerID = fmt.Sprintf("%s:%s", providerID, model)
+	}
 
 	// Special provider types that don't just use HTTPProvider or have complex init
 	if found {
@@ -394,6 +419,31 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 
 	// Handle standalone provider keywords that return specialized providers
 	switch strings.ToLower(providerType) {
+	case "overflow":
+		var overflowConfig config.OverflowConfig
+		var found bool
+
+		if instanceName != "" {
+			overflowConfig, found = cfg.Providers.Overflow[instanceName]
+		}
+		
+		if !found {
+			overflowConfig, found = cfg.Providers.Overflow[""]
+			if !found && instanceName == "" && len(cfg.Providers.Overflow) > 0 {
+				for _, v := range cfg.Providers.Overflow {
+					overflowConfig = v
+					found = true
+					break
+				}
+			}
+		}
+		
+		if !found {
+			return nil, fmt.Errorf("overflow provider '%s' not configured", instanceName)
+		}
+		
+		return NewOverflowProvider(cfg, overflowConfig.List), nil
+
 	case "schedule":
 		// instanceName is from ResolveProvider (e.g. "work" from "schedule/work")
 		var scheduleConfig config.ScheduleConfig
@@ -590,5 +640,5 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		return nil, fmt.Errorf("no API base configured for provider (model: %s)", model)
 	}
 
-	return NewHTTPProvider(apiKey, apiBase, proxy, timeout, model, maxTokens, temperature, maxToolIterations, maxConcurrentSessions), nil
+	return NewHTTPProvider(providerID, apiKey, apiBase, proxy, timeout, model, maxTokens, temperature, maxToolIterations, maxConcurrentSessions), nil
 }
