@@ -17,6 +17,9 @@ type SubagentTask struct {
 	ID            string
 	Task          string
 	Label         string
+	Role          string
+	ContextFiles  []string
+	AgentID       string
 	OriginChannel string
 	OriginChatID  string
 	Status        string
@@ -113,7 +116,7 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 	sm.tools.Register(tool)
 }
 
-func (sm *SubagentManager) Spawn(ctx context.Context, task, label, role string, contextFiles []string, originChannel, originChatID string, callback AsyncCallback) (string, error) {
+func (sm *SubagentManager) Spawn(ctx context.Context, task, label, role, agentID string, contextFiles []string, originChannel, originChatID string, callback AsyncCallback) (string, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -124,6 +127,9 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label, role string, 
 		ID:            taskID,
 		Task:          task,
 		Label:         label,
+		Role:          role,
+		ContextFiles:  contextFiles,
+		AgentID:       agentID,
 		OriginChannel: originChannel,
 		OriginChatID:  originChatID,
 		Status:        "running",

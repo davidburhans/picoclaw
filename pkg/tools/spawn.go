@@ -7,11 +7,12 @@ import (
 )
 
 type SpawnTool struct {
-	manager       *SubagentManager
-	originChannel string
-	originChatID  string
-	callback      AsyncCallback // For async completion notification
-	mu            sync.RWMutex
+	manager        *SubagentManager
+	originChannel  string
+	originChatID   string
+	allowlistCheck func(targetAgentID string) bool
+	callback       AsyncCallback // For async completion notification
+	mu             sync.RWMutex
 }
 
 func NewSpawnTool(manager *SubagentManager) *SpawnTool {
@@ -56,6 +57,10 @@ func (t *SpawnTool) Parameters() map[string]interface{} {
 				"items":       map[string]interface{}{"type": "string"},
 				"description": "File paths to read and inject as context before the task starts.",
 			},
+			"agent_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional target agent ID to delegate the task to",
+			},
 		},
 		"required": []string{"task"},
 	}
@@ -66,6 +71,10 @@ func (t *SpawnTool) SetContext(channel, chatID string) {
 	defer t.mu.Unlock()
 	t.originChannel = channel
 	t.originChatID = chatID
+}
+
+func (t *SpawnTool) SetAllowlistChecker(check func(targetAgentID string) bool) {
+	t.allowlistCheck = check
 }
 
 func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
@@ -84,6 +93,14 @@ func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *T
 			}
 		}
 	}
+	agentID, _ := args["agent_id"].(string)
+
+	// Check allowlist if targeting a specific agent
+	if agentID != "" && t.allowlistCheck != nil {
+		if !t.allowlistCheck(agentID) {
+			return ErrorResult(fmt.Sprintf("not allowed to spawn agent '%s'", agentID))
+		}
+	}
 
 	if t.manager == nil {
 		return ErrorResult("Subagent manager not configured")
@@ -95,7 +112,7 @@ func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *T
 	t.mu.RUnlock()
 
 	// Pass callback to manager for async completion notification
-	result, err := t.manager.Spawn(ctx, task, label, role, contextFiles, originChannel, originChatID, t.callback)
+	result, err := t.manager.Spawn(ctx, task, label, role, agentID, contextFiles, originChannel, originChatID, t.callback)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to spawn subagent: %v", err))
 	}

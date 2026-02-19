@@ -482,15 +482,19 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		}
 		return NewScheduleProvider(cfg, &scheduleConfig, location), nil
 	case "claude-cli", "claudecode", "claude-code":
-		workspace := cfg.WorkspacePath()
+		workspace := cfg.Agents.Defaults.Workspace
 		if workspace == "" {
 			workspace = "."
+		} else {
+			workspace = config.ExpandHome(workspace)
 		}
 		return NewClaudeCliProvider(workspace), nil
 	case "codex-cli", "codex-code":
-		workspace := cfg.WorkspacePath()
+		workspace := cfg.Agents.Defaults.Workspace
 		if workspace == "" {
 			workspace = "."
+		} else {
+			workspace = config.ExpandHome(workspace)
 		}
 		return NewCodexCliProvider(workspace), nil
 	}
@@ -591,7 +595,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 					apiBase = "https://integrate.api.nvidia.com/v1"
 				}
 			}
-		case (strings.Contains(lowerModel, "ollama") || strings.HasPrefix(model, "ollama/")):
+		case (strings.Contains(lowerModel, "ollama") || strings.HasPrefix(model, "ollama/")) && func() bool { p, ok := cfg.Providers.Get("ollama", ""); return ok && (p.APIKey != "" || p.APIBase != "") }():
 			p, ok := cfg.Providers.Get("ollama", "")
 			if ok && (p.APIKey != "" || p.APIBase != "") {
 				logger.InfoCF("provider", "Ollama provider selected based on model name prefix", nil)
@@ -606,15 +610,13 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 				}
 				logger.DebugCF("provider", "Ollama apiBase", map[string]interface{}{"api_base": apiBase})
 			}
-		case (cfg.Providers.VLLM != nil):
-			p, ok := cfg.Providers.Get("vllm", "")
-			if ok && p.APIBase != "" {
-				apiKey = p.APIKey
-				apiBase = p.APIBase
-				proxy = p.Proxy
-				if apiKey == "" {
-					apiKey = "vllm"
-				}
+		case func() bool { _, ok := cfg.Providers.Get("vllm", ""); return ok }():
+			p, _ := cfg.Providers.Get("vllm", "")
+			apiKey = p.APIKey
+			apiBase = p.APIBase
+			proxy = p.Proxy
+			if apiKey == "" {
+				apiKey = "vllm"
 			}
 
 		default:

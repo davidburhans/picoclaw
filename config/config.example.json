@@ -105,7 +105,8 @@
       "max_tokens": 16384,
       "temperature": 1.0,
       "timeout": 300,
-      "max_concurrent_sessions": 1
+      "max_concurrent_sessions": 1,
+      "web_search": true
     },
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
