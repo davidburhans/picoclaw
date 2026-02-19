@@ -140,6 +140,26 @@ func (p *CodexProvider) GetDefaultModel() string {
 	return codexDefaultModel
 }
 
+func (p *CodexProvider) GetMaxTokens() int {
+	return 8192
+}
+
+func (p *CodexProvider) GetTemperature() float64 {
+	return 0.7
+}
+
+func (p *CodexProvider) GetMaxToolIterations() int {
+	return 20
+}
+
+func (p *CodexProvider) GetTimeout() int {
+	return 120
+}
+
+func (p *CodexProvider) GetMaxConcurrent() int {
+	return 1
+}
+
 func resolveCodexModel(model string) (string, string) {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if m == "" {

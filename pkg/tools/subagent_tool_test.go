@@ -40,12 +40,24 @@ func (m *MockLLMProvider) GetDefaultModel() string {
 	return "test-model"
 }
 
-func (m *MockLLMProvider) SupportsTools() bool {
-	return false
+func (m *MockLLMProvider) GetMaxTokens() int {
+	return 4096
 }
 
-func (m *MockLLMProvider) GetContextWindow() int {
-	return 4096
+func (m *MockLLMProvider) GetTemperature() float64 {
+	return 0.7
+}
+
+func (m *MockLLMProvider) GetMaxToolIterations() int {
+	return 10
+}
+
+func (m *MockLLMProvider) GetTimeout() int {
+	return 120
+}
+
+func (m *MockLLMProvider) GetMaxConcurrent() int {
+	return 0 // default
 }
 
 // TestSubagentTool_Name verifies tool name

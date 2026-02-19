@@ -401,18 +401,33 @@ func TestCodexCliProvider_GetDefaultModel(t *testing.T) {
 func createMockCodexCLI(t *testing.T, events []string) string {
 	t.Helper()
 	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "codex")
-
+	
+	// Create a Go source file that prints the events
+	goSrc := filepath.Join(tmpDir, "mock_codex.go")
 	var sb strings.Builder
-	sb.WriteString("#!/bin/bash\n")
+	sb.WriteString("package main\nimport \"fmt\"\nfunc main() {\n")
 	for _, event := range events {
-		sb.WriteString(fmt.Sprintf("echo '%s'\n", event))
+		// Use backticks for raw string literal in Go
+		sb.WriteString(fmt.Sprintf("\tfmt.Println(`%s`)\n", event))
 	}
-
-	if err := os.WriteFile(scriptPath, []byte(sb.String()), 0755); err != nil {
+	sb.WriteString("}\n")
+	
+	if err := os.WriteFile(goSrc, []byte(sb.String()), 0644); err != nil {
 		t.Fatal(err)
 	}
-	return scriptPath
+
+	// Build the mock executable
+	exeName := "codex"
+	if os.PathSeparator == '\\' {
+		exeName += ".exe"
+	}
+	exePath := filepath.Join(tmpDir, exeName)
+	cmd := exec.Command("go", "build", "-o", exePath, goSrc)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build mock CLI: %v\nOutput: %s", err, string(out))
+	}
+	
+	return exePath
 }
 
 func TestCodexCliProvider_MockCLI_Success(t *testing.T) {
@@ -473,19 +488,37 @@ func TestCodexCliProvider_MockCLI_Error(t *testing.T) {
 func TestCodexCliProvider_MockCLI_WithModel(t *testing.T) {
 	// Mock script that captures args to verify model flag is passed
 	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "codex")
-	script := `#!/bin/bash
-# Write args to a file for verification
-echo "$@" > "` + filepath.Join(tmpDir, "args.txt") + `"
-echo '{"type":"item.completed","item":{"id":"1","type":"agent_message","text":"ok"}}'
-echo '{"type":"turn.completed"}'`
+	argsPath := filepath.Join(tmpDir, "args.txt")
+	
+	goSrc := filepath.Join(tmpDir, "mock_codex.go")
+	script := fmt.Sprintf(`package main
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+func main() {
+	os.WriteFile("%s", []byte(strings.Join(os.Args[1:], " ")), 0644)
+	fmt.Println("{\"type\":\"item.completed\",\"item\":{\"id\":\"1\",\"type\":\"agent_message\",\"text\":\"ok\"}}")
+	fmt.Println("{\"type\":\"turn.completed\"}")
+}`, strings.ReplaceAll(argsPath, "\\", "\\\\"))
 
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(goSrc, []byte(script), 0644); err != nil {
 		t.Fatal(err)
+	}
+	
+	exeName := "codex"
+	if os.PathSeparator == '\\' {
+		exeName += ".exe"
+	}
+	exePath := filepath.Join(tmpDir, exeName)
+	cmd := exec.Command("go", "build", "-o", exePath, goSrc)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build mock CLI: %v\nOutput: %s", err, string(out))
 	}
 
 	p := &CodexCliProvider{
-		command:   scriptPath,
+		command:   exePath,
 		workspace: "/tmp/test-workspace",
 	}
 
@@ -519,15 +552,24 @@ echo '{"type":"turn.completed"}'`
 func TestCodexCliProvider_MockCLI_ContextCancel(t *testing.T) {
 	// Script that sleeps forever
 	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "codex")
-	script := "#!/bin/bash\nsleep 60"
-
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+	goSrc := filepath.Join(tmpDir, "mock_codex.go")
+	script := "package main\nimport \"time\"\nfunc main() { time.Sleep(60 * time.Second) }"
+	if err := os.WriteFile(goSrc, []byte(script), 0644); err != nil {
 		t.Fatal(err)
 	}
 
+	exeName := "codex"
+	if os.PathSeparator == '\\' {
+		exeName += ".exe"
+	}
+	exePath := filepath.Join(tmpDir, exeName)
+	cmd := exec.Command("go", "build", "-o", exePath, goSrc)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build mock CLI: %v\nOutput: %s", err, string(out))
+	}
+
 	p := &CodexCliProvider{
-		command:   scriptPath,
+		command:   exePath,
 		workspace: "",
 	}
 

@@ -364,16 +364,32 @@ func backupFile(path string) error {
 }
 
 func copyFile(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+
+	// Handle symlinks
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return fmt.Errorf("readlink %s: %w", src, err)
+		}
+		if err := os.Symlink(target, dst); err != nil {
+			if os.IsExist(err) {
+				os.Remove(dst)
+				return os.Symlink(target, dst)
+			}
+			return fmt.Errorf("symlink %s -> %s: %w", target, dst, err)
+		}
+		return nil
+	}
+
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer srcFile.Close()
-
-	info, err := srcFile.Stat()
-	if err != nil {
-		return err
-	}
 
 	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 	if err != nil {

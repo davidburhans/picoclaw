@@ -306,6 +306,9 @@ func (sl *SkillsLoader) parseSimpleYAML(content string) map[string]string {
 }
 
 func (sl *SkillsLoader) extractFrontmatter(content string) string {
+	// Standardize to \n for easier parsing
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+
 	// (?s) enables DOTALL mode so . matches newlines
 	// Match first ---, capture everything until next --- on its own line
 	re := regexp.MustCompile(`(?s)^---\n(.*)\n---`)
@@ -317,6 +320,8 @@ func (sl *SkillsLoader) extractFrontmatter(content string) string {
 }
 
 func (sl *SkillsLoader) stripFrontmatter(content string) string {
+	// Standardize to \n first
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	re := regexp.MustCompile(`^---\n.*?\n---\n`)
 	return re.ReplaceAllString(content, "")
 }

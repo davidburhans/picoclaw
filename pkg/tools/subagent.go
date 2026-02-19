@@ -40,12 +40,13 @@ type SubagentManager struct {
 }
 
 func NewSubagentManager(provider providers.LLMProvider, defaultModel, workspace string, bus *bus.MessageBus) *SubagentManager {
+	cleanWS, _ := filepath.Abs(workspace)
 	return &SubagentManager{
 		tasks:         make(map[string]*SubagentTask),
 		provider:      provider,
 		defaultModel:  defaultModel,
 		bus:           bus,
-		workspace:     workspace,
+		workspace:     cleanWS,
 		tools:         NewToolRegistry(),
 		maxIterations: 10,
 		maxDepth:      5,
@@ -61,6 +62,12 @@ func (sm *SubagentManager) SetMaxIterations(n int) {
 	sm.maxIterations = n
 }
 
+func (sm *SubagentManager) GetMaxIterations() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.maxIterations
+}
+
 func (sm *SubagentManager) SetMaxDepth(depth int) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -73,10 +80,22 @@ func (sm *SubagentManager) SetMaxTokens(tokens int) {
 	sm.maxTokens = tokens
 }
 
+func (sm *SubagentManager) GetMaxTokens() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.maxTokens
+}
+
 func (sm *SubagentManager) SetTemperature(temp float64) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.temperature = temp
+}
+
+func (sm *SubagentManager) GetTemperature() float64 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.temperature
 }
 
 // SetTools sets the tool registry for subagent execution.
@@ -224,7 +243,7 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, role
 	// Send announce message back to main agent
 	if sm.bus != nil {
 		announceContent := fmt.Sprintf("Task '%s' completed.\n\nResult:\n%s", task.Label, task.Result)
-		sm.bus.PublishInbound(bus.InboundMessage{
+		sm.bus.PublishInbound(ctx, bus.InboundMessage{
 			Channel:  "system",
 			SenderID: fmt.Sprintf("subagent:%s", task.ID),
 			// Format: "original_channel:original_chat_id" for routing back
@@ -261,6 +280,7 @@ type SubagentTool struct {
 	originChatID  string
 	workspace     string
 	restrict      bool
+	mu            sync.RWMutex
 }
 
 func NewSubagentTool(manager *SubagentManager, workspace string, restrict bool) *SubagentTool {
@@ -308,6 +328,8 @@ func (t *SubagentTool) Parameters() map[string]interface{} {
 }
 
 func (t *SubagentTool) SetContext(channel, chatID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.originChannel = channel
 	t.originChatID = chatID
 }
@@ -335,8 +357,14 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 
 	// Check depth limit
 	currentDepth := getSubagentDepth(ctx)
-	if currentDepth >= t.manager.maxDepth {
-		return ErrorResult(fmt.Sprintf("Maximum sub-agent nesting depth (%d) exceeded", t.manager.maxDepth))
+
+	// BUG-3 FIX: Protect maxDepth read with RLock
+	t.manager.mu.RLock()
+	maxDepth := t.manager.maxDepth
+	t.manager.mu.RUnlock()
+
+	if currentDepth >= maxDepth {
+		return ErrorResult(fmt.Sprintf("Maximum sub-agent nesting depth (%d) exceeded", maxDepth))
 	}
 	ctx = withSubagentDepth(ctx, currentDepth+1)
 
@@ -370,6 +398,11 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	temperature := sm.temperature
 	sm.mu.RUnlock()
 
+	t.mu.RLock()
+	originChannel := t.originChannel
+	originChatID := t.originChatID
+	t.mu.RUnlock()
+
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
 		Provider:      sm.provider,
 		Model:         sm.defaultModel,
@@ -380,7 +413,7 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 			"max_tokens":  maxTokens,
 			"temperature": temperature,
 		},
-	}, messages, t.originChannel, t.originChatID)
+	}, messages, originChannel, originChatID)
 
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("Subagent execution failed: %v", err)).WithError(err)
@@ -430,16 +463,10 @@ func (sm *SubagentManager) injectContextFiles(task string, files []string) strin
 	sb.WriteString(task)
 	sb.WriteString("\n\n--- Context Files ---\n")
 	for _, f := range files {
-		absPath := f
-		if !filepath.IsAbs(f) {
-			absPath = filepath.Join(sm.workspace, f)
-		}
-
-		// Security check
-		cleanPath := filepath.Clean(absPath)
-		cleanWorkspace := filepath.Clean(sm.workspace)
-		if !strings.HasPrefix(cleanPath, cleanWorkspace) {
-			sb.WriteString(fmt.Sprintf("\n[%s]: (error: access denied - path outside workspace)\n", f))
+		// Use the unified validatePath check
+		absPath, err := validatePath(f, sm.workspace, true)
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("\n[%s]: (error: %v)\n", f, err))
 			continue
 		}
 

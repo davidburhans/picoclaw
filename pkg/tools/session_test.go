@@ -50,7 +50,7 @@ func TestReadSessionTool(t *testing.T) {
 	if result.ForLLM == "" {
 		t.Error("Expected content, got empty string")
 	}
-	
+
 	// Verify content format
 	if !strings.Contains(result.ForLLM, "test_session_v1") {
 		t.Error("Output should contain session key")

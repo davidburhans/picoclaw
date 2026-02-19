@@ -2,7 +2,9 @@ package bus
 
 import (
 	"context"
+	"log"
 	"sync"
+	"time"
 )
 
 type MessageBus struct {
@@ -21,13 +23,8 @@ func NewMessageBus() *MessageBus {
 	}
 }
 
-func (mb *MessageBus) PublishInbound(msg InboundMessage) {
-	mb.mu.RLock()
-	defer mb.mu.RUnlock()
-	if mb.closed {
-		return
-	}
-	mb.inbound <- msg
+func (mb *MessageBus) PublishInbound(ctx context.Context, msg InboundMessage) {
+	mb.publishWithRetry(ctx, mb.inbound, msg, "inbound")
 }
 
 func (mb *MessageBus) ConsumeInbound(ctx context.Context) (InboundMessage, bool) {
@@ -39,13 +36,60 @@ func (mb *MessageBus) ConsumeInbound(ctx context.Context) (InboundMessage, bool)
 	}
 }
 
-func (mb *MessageBus) PublishOutbound(msg OutboundMessage) {
+func (mb *MessageBus) PublishOutbound(ctx context.Context, msg OutboundMessage) {
+	mb.publishWithRetry(ctx, mb.outbound, msg, "outbound")
+}
+
+func (mb *MessageBus) publishWithRetry(ctx context.Context, ch interface{}, msg interface{}, label string) {
 	mb.mu.RLock()
-	defer mb.mu.RUnlock()
-	if mb.closed {
+	closed := mb.closed
+	mb.mu.RUnlock()
+
+	if closed {
 		return
 	}
-	mb.outbound <- msg
+
+	// Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 500ms
+	backoff := 10 * time.Millisecond
+	maxBackoff := 500 * time.Millisecond
+
+	for {
+		var ok bool
+		switch channel := ch.(type) {
+		case chan InboundMessage:
+			select {
+			case channel <- msg.(InboundMessage):
+				ok = true
+			default:
+			}
+		case chan OutboundMessage:
+			select {
+			case channel <- msg.(OutboundMessage):
+				ok = true
+			default:
+			}
+		}
+
+		if ok {
+			return
+		}
+
+		// Channel full, wait with backoff or context cancellation
+		select {
+		case <-ctx.Done():
+			log.Printf("[WARN] bus: dropped %s message due to context cancellation", label)
+			return
+		case <-time.After(backoff):
+			if backoff >= maxBackoff {
+				log.Printf("[WARN] bus: dropped %s message after maximum backoff (bus full)", label)
+				return
+			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
 }
 
 func (mb *MessageBus) SubscribeOutbound(ctx context.Context) (OutboundMessage, bool) {

@@ -10,9 +10,9 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id,omitempty"`
-	Result  interface{} `json:"result,omitempty"`
+	JSONRPC string        `json:"jsonrpc"`
+	ID      interface{}   `json:"id,omitempty"`
+	Result  interface{}   `json:"result,omitempty"`
 	Error   *JSONRPCError `json:"error,omitempty"`
 }
 
@@ -67,9 +67,9 @@ type CallToolResult struct {
 }
 
 type ToolContent struct {
-	Type string `json:"type"` // "text", "image", "resource"
-	Text string `json:"text,omitempty"`
-	Data string `json:"data,omitempty"`
+	Type     string `json:"type"` // "text", "image", "resource"
+	Text     string `json:"text,omitempty"`
+	Data     string `json:"data,omitempty"`
 	MimeType string `json:"mimeType,omitempty"`
 }
 

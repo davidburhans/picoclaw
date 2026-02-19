@@ -100,7 +100,7 @@ func (c *BaseChannel) HandleMessage(senderID, chatID, content string, media []st
 		Metadata:   metadata,
 	}
 
-	c.bus.PublishInbound(msg)
+	c.bus.PublishInbound(context.Background(), msg)
 }
 
 func (c *BaseChannel) setRunning(running bool) {

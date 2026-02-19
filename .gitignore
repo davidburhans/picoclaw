@@ -51,5 +51,5 @@ dist/
 build.log
 workspace/
 
-# Burhandler
-.burhandler/
+.dave/
+.jackie/

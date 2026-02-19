@@ -30,10 +30,10 @@ func (m *MCPManager) StartAll(ctx context.Context, cfg map[string]config.MCPServ
 				map[string]interface{}{"server": name})
 			continue
 		}
-		
+
 		var client *MCPClient
 		var err error
-		
+
 		// Determine transport
 		if serverCfg.Command != "" {
 			// stdio transport
@@ -41,7 +41,7 @@ func (m *MCPManager) StartAll(ctx context.Context, cfg map[string]config.MCPServ
 			if cwd == "" {
 				cwd = m.defaultCwd
 			}
-			
+
 			client, err = NewStdioClient(ctx, name, serverCfg.Command, serverCfg.Args, cwd, serverCfg.Env)
 			if err != nil {
 				logger.ErrorCF("mcp", "Failed to create stdio MCP client",
@@ -67,7 +67,7 @@ func (m *MCPManager) StartAll(ctx context.Context, cfg map[string]config.MCPServ
 				map[string]interface{}{"server": name})
 			continue
 		}
-		
+
 		// Initialize the client
 		if err := client.Initialize(ctx); err != nil {
 			logger.ErrorCF("mcp", "Failed to initialize MCP server",
@@ -78,13 +78,13 @@ func (m *MCPManager) StartAll(ctx context.Context, cfg map[string]config.MCPServ
 			client.Close()
 			continue
 		}
-		
+
 		m.clients[name] = client
-		
+
 		logger.InfoCF("mcp", "MCP server started",
 			map[string]interface{}{"server": name})
 	}
-	
+
 	return nil
 }
 
@@ -105,7 +105,7 @@ func (m *MCPManager) StopAll() {
 // GetAllTools returns all tools from all servers, keyed by server name
 func (m *MCPManager) GetAllTools(ctx context.Context) map[string][]MCPToolDef {
 	result := make(map[string][]MCPToolDef)
-	
+
 	for name, client := range m.clients {
 		tools, err := client.ListTools(ctx)
 		if err != nil {
@@ -118,7 +118,7 @@ func (m *MCPManager) GetAllTools(ctx context.Context) map[string][]MCPToolDef {
 		}
 		result[name] = tools
 	}
-	
+
 	return result
 }
 
@@ -130,7 +130,7 @@ func (m *MCPManager) GetClient(name string) *MCPClient {
 // GetServerSummaries returns summary info for all servers (for prompt generation)
 func (m *MCPManager) GetServerSummaries(ctx context.Context) []ServerSummary {
 	summaries := make([]ServerSummary, 0, len(m.clients))
-	
+
 	for name, client := range m.clients {
 		tools, err := client.ListTools(ctx)
 		if err != nil {
@@ -141,19 +141,19 @@ func (m *MCPManager) GetServerSummaries(ctx context.Context) []ServerSummary {
 				})
 			continue
 		}
-		
+
 		toolNames := make([]string, len(tools))
 		for i, tool := range tools {
 			toolNames[i] = fmt.Sprintf("mcp_%s_%s", name, tool.Name)
 		}
-		
+
 		summaries = append(summaries, ServerSummary{
 			Name:        name,
 			Tools:       toolNames,
 			Description: fmt.Sprintf("%d tools available", len(tools)),
 		})
 	}
-	
+
 	return summaries
 }
 

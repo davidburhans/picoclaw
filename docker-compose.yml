@@ -34,7 +34,8 @@ services:
       # Configuration file
       - ./config/config.json:/root/.picoclaw/config.json:ro
       # Persistent workspace (sessions, memory, logs)
-      - ./.burhandler:/root/.picoclaw/workspace:rw
+      - ./.dave:/root/.picoclaw/dave:rw
+      - ./.jackie:/root/.picoclaw/jackie:rw
       # MCP server files
       - ./mcp:/mcp:ro
     command: ["gateway"]

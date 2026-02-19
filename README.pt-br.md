@@ -215,35 +215,30 @@ picoclaw onboard
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "provider": "openrouter",   // Provedor atual
-      "model": "",                // Se vazio, usa o modelo específico do provedor
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20
+      "provider": "ollama/llama3", // Sintaxe: provider[/instance]
+      "model": "",                // Opcional: fallback para a configuração do provedor
+      "max_tokens": 0,            // Opcional: fallback para a configuração do provedor
+      "temperature": 0,           // Opcional: fallback para a configuração do provedor
+      "max_tool_iterations": 0    // Opcional: fallback para a configuração do provedor
     }
   },
   "providers": {
-    "openrouter": {
-      "model": "anthropic/claude-3.5-sonnet", // Modelo opcional por provedor
-      "api_key": "xxx",
-      "api_base": "https://openrouter.ai/api/v1"
-    }
-  },
-  "tools": {
-    "web": {
-      "brave": {
-        "enabled": false,
-        "api_key": "YOUR_BRAVE_API_KEY",
-        "max_results": 5
-      },
-      "duckduckgo": {
-        "enabled": true,
-        "max_results": 5
+    "ollama": {
+      "llama3": {
+        "model": "llama3.2",
+        "api_base": "http://localhost:11434/v1",
+        "max_tokens": 4096
       }
     }
   }
 }
 ```
+
+> [!TIP]
+> **Hierarquia de Configuração**: Os valores de configuração (model, max_tokens, temperature, max_tool_iterations, timeout) são resolvidos nesta ordem:
+> 1. `agents.defaults` no `config.json` (se não for zero/vazio)
+> 2. `providers.<nome>.<instância>` no `config.json`
+> 3. Padrões internos globais (ex: `glm-4.7`, `8192` tokens, etc.)
 
 **3. Obter API Keys**
 
@@ -501,6 +496,29 @@ O PicoClaw armazena dados no workspace configurado (padrao: `~/.picoclaw/workspa
 └── USER.md           # Preferencias do usuario
 ```
 
+### Configuração de Workspace
+
+Os usuários podem ser mapeados para workspaces específicos no `config.json`:
+
+```jsonc
+{
+  "workspaces": {
+    "dave": {
+      "path": "~/.picoclaw/workspace_dave",
+      "users": ["discord_id_1", "telegram_id_A"],
+      "restrict_to_workspace": true
+    },
+    "wife": {
+      "path": "~/.picoclaw/workspace_wife",
+      "users": ["discord_id_2"],
+      "restrict_to_workspace": false
+    }
+  }
+}
+```
+
+Se nenhum mapeamento for encontrado, o agente usará o workspace padrão definido em `agents.defaults.workspace`.
+
 ### 🔒 Sandbox de Seguranca
 
 O PicoClaw roda em um ambiente sandbox por padrao. O agente so pode acessar arquivos e executar comandos dentro do workspace configurado.
@@ -686,6 +704,69 @@ O subagente tem acesso as ferramentas (message, web_search, etc.) e pode se comu
 | `openai` (Em teste) | LLM (GPT direto) | [platform.openai.com](https://platform.openai.com) |
 | `deepseek` (Em teste) | LLM (DeepSeek direto) | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq` | LLM + **Transcricao de voz** (Whisper) | [console.groq.com](https://console.groq.com) |
+| `schedule` | Agendamento de modelos baseado em tempo | (Nenhum) |
+
+#### Opções Comuns de Provedor
+
+Todos os provedores suportam as seguintes chaves de configuração opcionais:
+- `model`: Substituir modelo padrão
+- `api_key`: Chave da API do provedor
+- `api_base`: Endpoint da API personalizado
+- `max_tokens`: Tokens máximos para geração
+- `temperature`: Criatividade (0.0 - 1.0)
+- `max_tool_iterations`: Máximo de chamadas de ferramenta por solicitação
+- `timeout`: Tempo limite da solicitação em segundos
+- `max_concurrent_sessions`: Máximo de solicitações simultâneas (padrão: 1)
+
+<details>
+<summary><b>Configuracao de Schedule (Agendamento)</b></summary>
+
+O provedor Schedule permite alternar automaticamente diferentes modelos ou provedores com base na hora do dia ou dia da semana. Isso e util para otimizar custos (ex: usar modelos mais poderosos durante o horario comercial).
+
+Voce pode usar `config.jsonc` para adicionar comentarios.
+
+**Exemplo de Configuracao**
+
+```jsonc
+{
+  "agents": {
+    "defaults": {
+      // Usar uma configuracao de agendamento especifica, ex: "schedule/work"
+      "provider": "schedule/work",
+      "model": "auto" // O modelo e decidido pelo agendador
+    }
+  },
+  "providers": {
+    // Definir multiplas configuracoes de agendamento
+    "schedule": {
+      "work": {
+        "timezone": "America/Sao_Paulo",
+        "default": {
+          "provider": "deepseek",
+          "model": "deepseek-chat"
+        },
+        "rules": [
+          {
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "hours": { "start": "09:00", "end": "18:00" },
+            "provider": "anthropic",
+            "model": "claude-3-5-sonnet-20241022"
+          }
+        ]
+      },
+      "weekend": {
+        "timezone": "America/Sao_Paulo",
+        "default": {
+          "provider": "gemini",
+          "model": "gemini-2.0-flash-exp"
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
 
 <details>
 <summary><b>Configuracao Zhipu</b></summary>

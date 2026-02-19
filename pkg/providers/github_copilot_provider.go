@@ -77,6 +77,25 @@ func (p *GitHubCopilotProvider) Chat(ctx context.Context, messages []Message, to
 }
 
 func (p *GitHubCopilotProvider) GetDefaultModel() string {
-
 	return "gpt-4.1"
+}
+
+func (p *GitHubCopilotProvider) GetMaxTokens() int {
+	return 8192
+}
+
+func (p *GitHubCopilotProvider) GetTemperature() float64 {
+	return 0.7
+}
+
+func (p *GitHubCopilotProvider) GetMaxToolIterations() int {
+	return 20
+}
+
+func (p *GitHubCopilotProvider) GetTimeout() int {
+	return 120
+}
+
+func (p *GitHubCopilotProvider) GetMaxConcurrent() int {
+	return 1
 }

@@ -58,7 +58,9 @@
 
 ## ✨ Features
 
-🪶 **Ultra-Lightweight**: <10MB Memory footprint — 99% smaller than Clawdbot - core functionality.
+🪶 **Ultra-Lightweight**: <10MB Memory footprint — 99% smaller than Clawdbot.
+
+👥 **Multi-User Isolation**: Host multiple users on one instance with isolated persistent workspaces, sessions, and cron tasks.
 
 💰 **Minimal Cost**: Efficient enough to run on $10 Hardware — 98% cheaper than a Mac mini.
 
@@ -202,42 +204,46 @@ docker compose --profile gateway up -d
 picoclaw onboard
 ```
 
-**2. Configure** (`~/.picoclaw/config.json`)
+**2. Configure** (`~/.picoclaw/config.json`) - *Supports JSONC (comments allowed)*
 
 ```json
 {
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "provider": "openrouter",   // Current provider
-      "model": "",                // If empty, uses provider-specific model
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20
+      "provider": "ollama/llama3", // Syntax: provider[/instance]
+      "model": "",                // Optional: fallback to provider config
+      "max_tokens": 0,            // Optional: fallback to provider config
+      "temperature": 0,           // Optional: fallback to provider config
+      "max_tool_iterations": 0    // Optional: fallback to provider config
+    }
+  },
+  "workspaces": {
+    "dave": {
+      "path": "~/.picoclaw/workspace_dave",
+      "users": ["discord_id_1", "telegram_id_A"]
     }
   },
   "providers": {
-    "openrouter": {
-      "model": "anthropic/claude-3.5-sonnet", // Optional per-provider model
-      "api_key": "xxx",
-      "api_base": "https://openrouter.ai/api/v1"
-    }
-  },
-  "tools": {
-    "web": {
-      "brave": {
-        "enabled": false,
-        "api_key": "YOUR_BRAVE_API_KEY",
-        "max_results": 5
-      },
-      "duckduckgo": {
-        "enabled": true,
-        "max_results": 5
+    "ollama": {
+      "llama3": {
+        "model": "llama3.2",
+        "api_base": "http://localhost:11434/v1",
+        "max_tokens": 4096
       }
     }
   }
 }
 ```
+
+> [!TIP]
+> **Configuration Hierarchy**: Configuration values (model, max_tokens, temperature, max_tool_iterations, timeout) are resolved in this order:
+> 1. `agents.defaults` in `config.json` (if non-zero/non-empty)
+> 2. `providers.<name>.<instance>` in `config.json`
+> 3. Global internal defaults (e.g., `glm-4.7`, `8192` tokens, etc.)
+
+> [!NOTE]
+> **Multi-Instance Support**: You can now define multiple configurations for the same provider as a map. Selective use with `"provider/instance"` or `"provider.instance"` in your default settings. If no instance is specified, it defaults to the single configuration (if present) or the first instance in the map.
 
 **3. Get API Keys**
 
@@ -502,6 +508,35 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 ├── TOOLS.md          # Tool descriptions
 └── USER.md           # User preferences
 ```
+
+### 👥 Multi-User Workspaces
+
+PicoClaw supports hosting multiple users with complete isolation. Each user (identified by their Discord, Telegram, or other channel ID) can be mapped to a dedicated workspace.
+
+#### Configuration Example
+
+```json
+{
+  "workspaces": {
+    "dave": {
+      "path": "~/.picoclaw/workspace_1",
+      "users": ["419307199341527053", "telegram_id_1"],
+      "restrict_to_workspace": true
+    },
+    "wife": {
+      "path": "~/.picoclaw/workspace_2",
+      "users": ["731332559895658516", "telegram_id_2"],
+      "restrict_to_workspace": false
+    }
+  }
+}
+```
+
+**Key Isolation Features:**
+- **Isolated Files**: Each workspace has its own `AGENT.md`, `MEMORY.md`, and documents.
+- **Isolated Sessions**: Conversation histories are stored within the user's workspace.
+- **Isolated Services**: Each workspace runs its own `HeartbeatService` and `CronService`.
+- **Automatic Routing**: Inbound messages are automatically routed to the correct workspace context based on the sender ID.
 
 ### 🔒 Security Sandbox
 
@@ -775,6 +810,19 @@ docker compose --profile gateway up
 | `openai(To be tested)`     | LLM (GPT direct)                        | [platform.openai.com](https://platform.openai.com)     |
 | `deepseek(To be tested)`   | LLM (DeepSeek direct)                   | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq`                     | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com)           |
+| `schedule`                 | Meta-provider (time-based routing)      | (Config in `config.json`)                              |
+
+#### Common Provider Options
+
+All providers support the following optional configuration keys:
+- `model`: Override default model
+- `api_key`: Provider API key
+- `api_base`: Custom API endpoint
+- `max_tokens`: Max tokens for generation
+- `temperature`: Creativity (0.0 - 1.0)
+- `max_tool_iterations`: Max tool calls per request
+- `timeout`: Request timeout in seconds
+- `max_concurrent_sessions`: Max concurrent requests (default: 1)
 
 <details>
 <summary><b>Zhipu</b></summary>

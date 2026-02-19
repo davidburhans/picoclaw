@@ -61,6 +61,8 @@
 
 🪶 **超轻量级**: 核心功能内存占用 <10MB — 比 Clawdbot 小 99%。
 
+👥 **多用户隔离**: 单个实例支持多个用户，拥有完全隔离的工作区、对话历史和定时任务。
+
 💰 **极低成本**: 高效到足以在 10 美元的硬件上运行 — 比 Mac mini 便宜 98%。
 
 ⚡️ **闪电启动**: 启动速度快 400 倍，即使在 0.6GHz 单核处理器上也能在 1 秒内启动。
@@ -187,7 +189,6 @@ docker compose run --rm picoclaw-agent -m "2+2 等于几？"
 # 交互模式
 docker compose run --rm picoclaw-agent
 
-```
 
 ### 重新构建
 
@@ -201,7 +202,7 @@ docker compose --profile gateway up -d
 
 > [!TIP]
 > 在 `~/.picoclaw/config.json` 中设置您的 API Key。
-> 获取 API Key: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu (智谱)](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) (LLM)
+> 获取 API Key: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu (智谱)](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys)
 > 网络搜索是 **可选的** - 获取免费的 [Brave Search API](https://brave.com/search/api) (每月 2000 次免费查询)
 
 **1. 初始化 (Initialize)**
@@ -218,34 +219,31 @@ picoclaw onboard
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "provider": "openrouter",   // 当前提供商
-      "model": "",                // 如果为空，则使用特定提供商的模型
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20
+      "provider": "ollama/llama3", // 语法: provider[/instance]
+      "model": "",                // 可选：回退到提供商配置
+      "max_tokens": 0,            // 可选：回退到提供商配置
+      "temperature": 0,           // 可选：回退到提供商配置
+      "max_tool_iterations": 0,   // 可选：回退到提供商配置
+      "max_concurrent_sessions": 1 // 最大并发 LLM 会话数
     }
   },
   "providers": {
-    "openrouter": {
-      "model": "anthropic/claude-3.5-sonnet", // 可选的特定提供商模型
-      "api_key": "xxx",
-      "api_base": "https://openrouter.ai/api/v1"
-    }
-  },
-  "tools": {
-    "web": {
-      "search": {
-        "api_key": "YOUR_BRAVE_API_KEY",
-        "max_results": 5
+    "ollama": {
+      "llama3": {
+        "model": "llama3.2",
+        "api_base": "http://localhost:11434/v1",
+        "max_tokens": 4096
       }
-    },
-    "cron": {
-      "exec_timeout_minutes": 5
     }
   }
 }
-
 ```
+
+> [!TIP]
+> **配置层级 (Configuration Hierarchy)**：配置值（model, max_tokens, temperature, max_tool_iterations, timeout）按以下顺序解析：
+> 1. `config.json` 中的 `agents.defaults`（如果非零/非空）
+> 2. `config.json` 中的 `providers.<name>.<instance>`
+> 3. 全局内部默认值（例如：`glm-4.7`, `8192` tokens 等）
 
 **3. 获取 API Key**
 
@@ -442,6 +440,30 @@ picoclaw gateway
 
 配置文件路径: `~/.picoclaw/config.json`
 
+
+### 工作区配置 (Workspaces)
+
+用户可以在 `config.json` 中映射到特定的工作区：
+
+```jsonc
+{
+  "workspaces": {
+    "dave": {
+      "path": "~/.picoclaw/workspace_dave",
+      "users": ["discord_id_1", "telegram_id_A"],
+      "restrict_to_workspace": true
+    },
+    "wife": {
+      "path": "~/.picoclaw/workspace_wife",
+      "users": ["discord_id_2"],
+      "restrict_to_workspace": false
+    }
+  }
+}
+```
+
+如果没有找到映射，Agent 将回退到 `agents.defaults.workspace` 中定义的默认工作区。
+
 ### 工作区布局 (Workspace Layout)
 
 PicoClaw 将数据存储在您配置的工作区中（默认：`~/.picoclaw/workspace`）：
@@ -557,6 +579,69 @@ Agent 读取 HEARTBEAT.md
 | `openai(待测试)` | LLM (GPT 直连) | [platform.openai.com](https://platform.openai.com) |
 | `deepseek(待测试)` | LLM (DeepSeek 直连) | [platform.deepseek.com](https://platform.deepseek.com) |
 | `groq` | LLM + **语音转录** (Whisper) | [console.groq.com](https://console.groq.com) |
+| `schedule` | 根据时间调度不同模型 | (无) |
+
+#### 通用提供商选项
+
+所有提供商都支持以下可选配置键：
+- `model`: 覆盖默认模型
+- `api_key`: 提供商 API 密钥
+- `api_base`: 自定义 API 端点
+- `max_tokens`: 生成的最大令牌数
+- `temperature`: 创造性 (0.0 - 1.0)
+- `max_tool_iterations`: 每个请求的最大工具调用次数
+- `timeout`: 请求超时时间（秒）
+- `max_concurrent_sessions`: 最大并发请求数（默认：1）
+
+<details>
+<summary><b>Schedule (时间调度) 配置示例</b></summary>
+
+Schedule 提供商允许您根据一天中的时间或一周中的哪一天自动切换不同的模型或提供商。这对优化成本很有用（例如在工作时间使用更强大的模型）。
+
+您可以使用 `config.jsonc` 并添加注释。
+
+**配置示例**
+
+```jsonc
+{
+  "agents": {
+    "defaults": {
+      // 使用特定的调度配置，例如 "schedule/work"
+      "provider": "schedule/work",
+      "model": "auto" // 模型由调度程序决定
+    }
+  },
+  "providers": {
+    // 定义多个调度配置
+    "schedule": {
+      "work": {
+        "timezone": "Asia/Shanghai",
+        "default": {
+          "provider": "deepseek",
+          "model": "deepseek-chat"
+        },
+        "rules": [
+          {
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "hours": { "start": "09:00", "end": "18:00" },
+            "provider": "anthropic",
+            "model": "claude-3-5-sonnet-20241022"
+          }
+        ]
+      },
+      "weekend": {
+        "timezone": "Asia/Shanghai",
+        "default": {
+          "provider": "gemini",
+          "model": "gemini-2.0-flash-exp"
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
 
 <details>
 <summary><b>智谱 (Zhipu) 配置示例</b></summary>

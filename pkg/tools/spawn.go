@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 type SpawnTool struct {
@@ -10,6 +11,7 @@ type SpawnTool struct {
 	originChannel string
 	originChatID  string
 	callback      AsyncCallback // For async completion notification
+	mu            sync.RWMutex
 }
 
 func NewSpawnTool(manager *SubagentManager) *SpawnTool {
@@ -60,6 +62,8 @@ func (t *SpawnTool) Parameters() map[string]interface{} {
 }
 
 func (t *SpawnTool) SetContext(channel, chatID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.originChannel = channel
 	t.originChatID = chatID
 }
@@ -85,8 +89,13 @@ func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *T
 		return ErrorResult("Subagent manager not configured")
 	}
 
+	t.mu.RLock()
+	originChannel := t.originChannel
+	originChatID := t.originChatID
+	t.mu.RUnlock()
+
 	// Pass callback to manager for async completion notification
-	result, err := t.manager.Spawn(ctx, task, label, role, contextFiles, t.originChannel, t.originChatID, t.callback)
+	result, err := t.manager.Spawn(ctx, task, label, role, contextFiles, originChannel, originChatID, t.callback)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to spawn subagent: %v", err))
 	}

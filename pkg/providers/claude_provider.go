@@ -56,6 +56,26 @@ func (p *ClaudeProvider) GetDefaultModel() string {
 	return "claude-sonnet-4-5-20250929"
 }
 
+func (p *ClaudeProvider) GetMaxTokens() int {
+	return 4096
+}
+
+func (p *ClaudeProvider) GetTemperature() float64 {
+	return 1.0
+}
+
+func (p *ClaudeProvider) GetMaxToolIterations() int {
+	return 20
+}
+
+func (p *ClaudeProvider) GetTimeout() int {
+	return 120
+}
+
+func (p *ClaudeProvider) GetMaxConcurrent() int {
+	return 1
+}
+
 func buildClaudeParams(messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (anthropic.MessageNewParams, error) {
 	var system []anthropic.TextBlockParam
 	var anthropicMessages []anthropic.MessageParam

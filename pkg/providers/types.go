@@ -38,6 +38,11 @@ type Message struct {
 type LLMProvider interface {
 	Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error)
 	GetDefaultModel() string
+	GetMaxTokens() int
+	GetTemperature() float64
+	GetMaxToolIterations() int
+	GetTimeout() int
+	GetMaxConcurrent() int
 }
 
 type ToolDefinition struct {

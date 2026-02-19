@@ -171,7 +171,7 @@ func (sm *Manager) StartNewSession(baseKey, name string) (string, error) {
 	// and we want the file key to be "discord_123_v1_name".
 	// But wait, the session manager expects the key to be the filename (without .json).
 	// So we should construct a safe key here.
-	
+
 	// Replace all colons with underscores
 	safeBaseKey = ""
 	for _, c := range baseKey {

@@ -75,3 +75,36 @@ func TestSkillsInfoValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestSkillsLoaderFrontmatter(t *testing.T) {
+	loader := &SkillsLoader{}
+
+	testcases := []struct {
+		name     string
+		content  string
+		expected string
+	}{
+		{
+			name: "lf-line-endings",
+			content: "---\nname: test\ndescription: desc\n---\n\n# Header",
+			expected: "name: test\ndescription: desc",
+		},
+		{
+			name: "crlf-line-endings",
+			content: "---\r\nname: test\r\ndescription: desc\r\n---\r\n\n# Header",
+			expected: "name: test\ndescription: desc",
+		},
+		{
+			name: "mixed-line-endings",
+			content: "---\r\nname: test\ndescription: desc\r\n---\n\n# Header",
+			expected: "name: test\ndescription: desc",
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := loader.extractFrontmatter(tc.content)
+			assert.Equal(t, tc.expected, metadata)
+		})
+	}
+}

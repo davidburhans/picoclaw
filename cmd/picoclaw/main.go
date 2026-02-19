@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -174,6 +175,8 @@ func main() {
 			fmt.Printf("Error loading config: %v\n", err)
 			os.Exit(1)
 		}
+
+		initializeWorkspaces(cfg)
 
 		workspace := cfg.WorkspacePath()
 		installer := skills.NewSkillInstaller(workspace)
@@ -602,6 +605,7 @@ func agentCmd() {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	initializeWorkspaces(cfg)
 
 	provider, err := providers.CreateProvider(cfg)
 	if err != nil {
@@ -738,6 +742,7 @@ func gatewayCmd() {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	initializeWorkspaces(cfg)
 
 	provider, err := providers.CreateProvider(cfg)
 	if err != nil {
@@ -766,33 +771,50 @@ func gatewayCmd() {
 			"skills_available": skillsInfo["available"],
 		})
 
-	// Setup cron tool and service
-	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	cronService := setupCronTool(agentLoop, msgBus, cfg.WorkspacePath(), cfg.Agents.Defaults.RestrictToWorkspace, execTimeout)
+	// Track services for multiple workspaces
+	var cronServices []*cron.CronService
+	var heartbeatServices []*heartbeat.HeartbeatService
 
-	heartbeatService := heartbeat.NewHeartbeatService(
-		cfg.WorkspacePath(),
-		cfg.Heartbeat.Interval,
-		cfg.Heartbeat.Enabled,
-	)
-	heartbeatService.SetBus(msgBus)
-	heartbeatService.SetHandler(func(prompt, channel, chatID string) *tools.ToolResult {
-		// Use cli:direct as fallback if no valid channel
-		if channel == "" || chatID == "" {
-			channel, chatID = "cli", "direct"
+	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
+
+	// Setup services for each workspace
+	workspacesToInit := initializeWorkspaces(cfg)
+	for _, wsPath := range workspacesToInit {
+		logger.InfoCF("agent", "Initializing services for workspace", map[string]interface{}{"path": wsPath})
+
+		// 1. Setup cron tool and service
+		restrict := true
+		if cfg.Agents.Defaults.RestrictToWorkspace != nil {
+			restrict = *cfg.Agents.Defaults.RestrictToWorkspace
 		}
-		// Use ProcessHeartbeat - no session history, each heartbeat is independent
-		response, err := agentLoop.ProcessHeartbeat(context.Background(), prompt, channel, chatID)
-		if err != nil {
-			return tools.ErrorResult(fmt.Sprintf("Heartbeat error: %v", err))
-		}
-		if response == "HEARTBEAT_OK" {
-			return tools.SilentResult("Heartbeat OK")
-		}
-		// For heartbeat, always return silent - the subagent result will be
-		// sent to user via processSystemMessage when the async task completes
-		return tools.SilentResult(response)
-	})
+		cs := setupCronTool(agentLoop, msgBus, wsPath, restrict, execTimeout)
+		cronServices = append(cronServices, cs)
+
+		// 2. Setup heartbeat service
+		hs := heartbeat.NewHeartbeatService(
+			wsPath,
+			cfg.Heartbeat.Interval,
+			cfg.Heartbeat.Enabled,
+		)
+		hs.SetBus(msgBus)
+		currentWS := wsPath // Capture for closure
+		hs.SetHandler(func(prompt, channel, chatID string) *tools.ToolResult {
+			// Use cli:direct as fallback if no valid channel
+			if channel == "" || chatID == "" {
+				channel, chatID = "cli", "direct"
+			}
+			// Use ProcessHeartbeatForWorkspace - no session history, each heartbeat is independent
+			response, err := agentLoop.ProcessHeartbeatForWorkspace(context.Background(), prompt, channel, chatID, currentWS)
+			if err != nil {
+				return tools.ErrorResult(fmt.Sprintf("Heartbeat error: %v", err))
+			}
+			if response == "HEARTBEAT_OK" {
+				return tools.SilentResult("Heartbeat OK")
+			}
+			return tools.SilentResult(response)
+		})
+		heartbeatServices = append(heartbeatServices, hs)
+	}
 
 	channelManager, err := channels.NewManager(cfg, msgBus)
 	if err != nil {
@@ -804,8 +826,8 @@ func gatewayCmd() {
 	agentLoop.SetChannelManager(channelManager)
 
 	var transcriber *voice.GroqTranscriber
-	if cfg.Providers.Groq.APIKey != "" {
-		transcriber = voice.NewGroqTranscriber(cfg.Providers.Groq.APIKey)
+	if p, ok := cfg.Providers.Get("groq", ""); ok && p.APIKey != "" {
+		transcriber = voice.NewGroqTranscriber(p.APIKey)
 		logger.InfoC("voice", "Groq voice transcription enabled")
 	}
 
@@ -843,15 +865,21 @@ func gatewayCmd() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := cronService.Start(); err != nil {
-		fmt.Printf("Error starting cron service: %v\n", err)
-	}
-	fmt.Println("✓ Cron service started")
+	// Services are started individually below
 
-	if err := heartbeatService.Start(); err != nil {
-		fmt.Printf("Error starting heartbeat service: %v\n", err)
+	for _, cs := range cronServices {
+		if err := cs.Start(); err != nil {
+			fmt.Printf("Error starting cron service: %v\n", err)
+		}
 	}
-	fmt.Println("✓ Heartbeat service started")
+	fmt.Printf("✓ Cron services started (%d workspaces)\n", len(cronServices))
+
+	for _, hs := range heartbeatServices {
+		if err := hs.Start(); err != nil {
+			fmt.Printf("Error starting heartbeat service: %v\n", err)
+		}
+	}
+	fmt.Printf("✓ Heartbeat services started (%d workspaces)\n", len(heartbeatServices))
 
 	stateManager := state.NewManager(cfg.WorkspacePath())
 	deviceService := devices.NewService(devices.Config{
@@ -887,8 +915,12 @@ func gatewayCmd() {
 	cancel()
 	healthServer.Stop(context.Background())
 	deviceService.Stop()
-	heartbeatService.Stop()
-	cronService.Stop()
+	for _, hs := range heartbeatServices {
+		hs.Stop()
+	}
+	for _, cs := range cronServices {
+		cs.Stop()
+	}
 	agentLoop.Stop()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
@@ -927,13 +959,29 @@ func statusCmd() {
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Printf("Model: %s\n", cfg.Agents.Defaults.Model)
 
-		hasOpenRouter := cfg.Providers.OpenRouter.APIKey != ""
-		hasAnthropic := cfg.Providers.Anthropic.APIKey != ""
-		hasOpenAI := cfg.Providers.OpenAI.APIKey != ""
-		hasGemini := cfg.Providers.Gemini.APIKey != ""
-		hasZhipu := cfg.Providers.Zhipu.APIKey != ""
-		hasGroq := cfg.Providers.Groq.APIKey != ""
-		hasVLLM := cfg.Providers.VLLM.APIBase != ""
+		check := func(e config.ProviderEntries) bool {
+			for _, v := range e {
+				if v.APIKey != "" {
+					return true
+				}
+			}
+			return false
+		}
+
+		hasOpenRouter := check(cfg.Providers.OpenRouter)
+		hasAnthropic := check(cfg.Providers.Anthropic)
+		hasOpenAI := check(cfg.Providers.OpenAI)
+		hasGemini := check(cfg.Providers.Gemini)
+		hasZhipu := check(cfg.Providers.Zhipu)
+		hasGroq := check(cfg.Providers.Groq)
+
+		hasVLLM := false
+		for _, v := range cfg.Providers.VLLM {
+			if v.APIBase != "" {
+				hasVLLM = true
+				break
+			}
+		}
 
 		status := func(enabled bool) string {
 			if enabled {
@@ -948,7 +996,15 @@ func statusCmd() {
 		fmt.Println("Zhipu API:", status(hasZhipu))
 		fmt.Println("Groq API:", status(hasGroq))
 		if hasVLLM {
-			fmt.Printf("vLLM/Local: ✓ %s\n", cfg.Providers.VLLM.APIBase)
+			// Print first vLLM base found
+			vBase := ""
+			for _, v := range cfg.Providers.VLLM {
+				if v.APIBase != "" {
+					vBase = v.APIBase
+					break
+				}
+			}
+			fmt.Printf("vLLM/Local: ✓ %s\n", vBase)
 		} else {
 			fmt.Println("vLLM/Local: not set")
 		}
@@ -1057,14 +1113,11 @@ func authLoginOpenAI(useDeviceCode bool) {
 		os.Exit(1)
 	}
 
-	if err := auth.SetCredential("openai", cred); err != nil {
-		fmt.Printf("Failed to save credentials: %v\n", err)
-		os.Exit(1)
-	}
-
 	appCfg, err := loadConfig()
 	if err == nil {
-		appCfg.Providers.OpenAI.AuthMethod = "oauth"
+		p := appCfg.Providers.OpenAI[""]
+		p.AuthMethod = "oauth"
+		appCfg.Providers.OpenAI[""] = p
 		if err := config.SaveConfig(getConfigPath(), appCfg); err != nil {
 			fmt.Printf("Warning: could not update config: %v\n", err)
 		}
@@ -1092,9 +1145,13 @@ func authLoginPasteToken(provider string) {
 	if err == nil {
 		switch provider {
 		case "anthropic":
-			appCfg.Providers.Anthropic.AuthMethod = "token"
+			p := appCfg.Providers.Anthropic[""]
+			p.AuthMethod = "token"
+			appCfg.Providers.Anthropic[""] = p
 		case "openai":
-			appCfg.Providers.OpenAI.AuthMethod = "token"
+			p := appCfg.Providers.OpenAI[""]
+			p.AuthMethod = "token"
+			appCfg.Providers.OpenAI[""] = p
 		}
 		if err := config.SaveConfig(getConfigPath(), appCfg); err != nil {
 			fmt.Printf("Warning: could not update config: %v\n", err)
@@ -1128,9 +1185,13 @@ func authLogoutCmd() {
 		if err == nil {
 			switch provider {
 			case "openai":
-				appCfg.Providers.OpenAI.AuthMethod = ""
+				p := appCfg.Providers.OpenAI[""]
+				p.AuthMethod = ""
+				appCfg.Providers.OpenAI[""] = p
 			case "anthropic":
-				appCfg.Providers.Anthropic.AuthMethod = ""
+				p := appCfg.Providers.Anthropic[""]
+				p.AuthMethod = ""
+				appCfg.Providers.Anthropic[""] = p
 			}
 			config.SaveConfig(getConfigPath(), appCfg)
 		}
@@ -1144,8 +1205,14 @@ func authLogoutCmd() {
 
 		appCfg, err := loadConfig()
 		if err == nil {
-			appCfg.Providers.OpenAI.AuthMethod = ""
-			appCfg.Providers.Anthropic.AuthMethod = ""
+			for k, v := range appCfg.Providers.OpenAI {
+				v.AuthMethod = ""
+				appCfg.Providers.OpenAI[k] = v
+			}
+			for k, v := range appCfg.Providers.Anthropic {
+				v.AuthMethod = ""
+				appCfg.Providers.Anthropic[k] = v
+			}
 			config.SaveConfig(getConfigPath(), appCfg)
 		}
 
@@ -1250,6 +1317,8 @@ func cronCmd() {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
 	}
+
+	initializeWorkspaces(cfg)
 
 	cronStorePath := filepath.Join(cfg.WorkspacePath(), "cron", "jobs.json")
 
@@ -1649,4 +1718,30 @@ func skillsShowCmd(loader *skills.SkillsLoader, skillName string) {
 	fmt.Printf("\n📦 Skill: %s\n", skillName)
 	fmt.Println("----------------------")
 	fmt.Println(content)
+}
+
+func workspacesToInitList(workspaces map[string]bool) []string {
+	var list []string
+	for ws := range workspaces {
+		list = append(list, ws)
+	}
+	sort.Strings(list)
+	return list
+}
+
+func initializeWorkspaces(cfg *config.Config) []string {
+	workspacesMap := make(map[string]bool)
+	defaultWS := cfg.WorkspacePath()
+	workspacesMap[defaultWS] = true
+	for _, ws := range cfg.Workspaces {
+		if ws.Path != "" {
+			workspacesMap[expandHome(ws.Path)] = true
+		}
+	}
+
+	wsList := workspacesToInitList(workspacesMap)
+	for _, wsPath := range wsList {
+		createWorkspaceTemplates(wsPath, cfg.Agents.Defaults.Name)
+	}
+	return wsList
 }

@@ -80,6 +80,10 @@ func (t *CronTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "Cron expression for complex recurring schedules (e.g., '0 9 * * *' for daily at 9am). Use this for complex recurring schedules.",
 			},
+			"timezone": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: Timezone for the schedule (e.g., 'America/Chicago', 'UTC'). If not specified, uses the system's local time. Useful when the user is in a different timezone than the server.",
+			},
 			"job_id": map[string]interface{}{
 				"type":        "string",
 				"description": "Job ID (for remove/enable/disable)",
@@ -145,6 +149,9 @@ func (t *CronTool) addJob(args map[string]interface{}) *ToolResult {
 	atSeconds, hasAt := args["at_seconds"].(float64)
 	everySeconds, hasEvery := args["every_seconds"].(float64)
 	cronExpr, hasCron := args["cron_expr"].(string)
+	
+	// Check for timezone
+	timezone, _ := args["timezone"].(string)
 
 	// Priority: at_seconds > every_seconds > cron_expr
 	if hasAt {
@@ -152,17 +159,20 @@ func (t *CronTool) addJob(args map[string]interface{}) *ToolResult {
 		schedule = cron.CronSchedule{
 			Kind: "at",
 			AtMS: &atMS,
+			TZ:   timezone,
 		}
 	} else if hasEvery {
 		everyMS := int64(everySeconds) * 1000
 		schedule = cron.CronSchedule{
 			Kind:    "every",
 			EveryMS: &everyMS,
+			TZ:      timezone,
 		}
 	} else if hasCron {
 		schedule = cron.CronSchedule{
 			Kind: "cron",
 			Expr: cronExpr,
+			TZ:   timezone,
 		}
 	} else {
 		return ErrorResult("one of at_seconds, every_seconds, or cron_expr is required")
@@ -290,7 +300,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 			output = fmt.Sprintf("Scheduled command '%s' executed:\n%s", job.Payload.Command, result.ForLLM)
 		}
 
-		t.msgBus.PublishOutbound(bus.OutboundMessage{
+		t.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: channel,
 			ChatID:  chatID,
 			Content: output,
@@ -300,7 +310,7 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 
 	// If deliver=true, send message directly without agent processing
 	if job.Payload.Deliver {
-		t.msgBus.PublishOutbound(bus.OutboundMessage{
+		t.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: channel,
 			ChatID:  chatID,
 			Content: job.Payload.Message,

@@ -272,12 +272,16 @@ func (m *Manager) dispatchOutbound(ctx context.Context) {
 				continue
 			}
 
-			if err := channel.Send(ctx, msg); err != nil {
-				logger.ErrorCF("channels", "Error sending message to channel", map[string]interface{}{
-					"channel": msg.Channel,
-					"error":   err.Error(),
-				})
-			}
+			// Run channel send in a separate goroutine to prevent Head-of-Line blocking.
+			// If one channel is slow/unresponsive, others should still receive messages.
+			go func(c Channel, m bus.OutboundMessage) {
+				if err := c.Send(ctx, m); err != nil {
+					logger.ErrorCF("channels", "Error sending message to channel", map[string]interface{}{
+						"channel": m.Channel,
+						"error":   err.Error(),
+					})
+				}
+			}(channel, msg)
 		}
 	}
 }

@@ -52,9 +52,8 @@ func TestAuthCredentialNeedsRefresh(t *testing.T) {
 
 func TestStoreRoundtrip(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	authFile = filepath.Join(tmpDir, "auth.json")
+	defer func() { authFile = "" }()
 
 	cred := &AuthCredential{
 		AccessToken:  "test-access-token",
@@ -89,9 +88,8 @@ func TestStoreRoundtrip(t *testing.T) {
 
 func TestStoreFilePermissions(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	authFile = filepath.Join(tmpDir, "auth.json")
+	defer func() { authFile = "" }()
 
 	cred := &AuthCredential{
 		AccessToken: "secret-token",
@@ -102,22 +100,23 @@ func TestStoreFilePermissions(t *testing.T) {
 		t.Fatalf("SetCredential() error: %v", err)
 	}
 
-	path := filepath.Join(tmpDir, ".picoclaw", "auth.json")
+	path := authFile
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Stat() error: %v", err)
 	}
 	perm := info.Mode().Perm()
-	if perm != 0600 {
+	// On Windows, permissions are not fully supported and 0600 might read back as 0666.
+	// Only check if not on windows.
+	if os.PathSeparator == '/' && perm != 0600 {
 		t.Errorf("file permissions = %o, want 0600", perm)
 	}
 }
 
 func TestStoreMultiProvider(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	authFile = filepath.Join(tmpDir, "auth.json")
+	defer func() { authFile = "" }()
 
 	openaiCred := &AuthCredential{AccessToken: "openai-token", Provider: "openai", AuthMethod: "oauth"}
 	anthropicCred := &AuthCredential{AccessToken: "anthropic-token", Provider: "anthropic", AuthMethod: "token"}
@@ -148,9 +147,8 @@ func TestStoreMultiProvider(t *testing.T) {
 
 func TestDeleteCredential(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	authFile = filepath.Join(tmpDir, "auth.json")
+	defer func() { authFile = "" }()
 
 	cred := &AuthCredential{AccessToken: "to-delete", Provider: "openai", AuthMethod: "oauth"}
 	if err := SetCredential("openai", cred); err != nil {
@@ -172,9 +170,8 @@ func TestDeleteCredential(t *testing.T) {
 
 func TestLoadStoreEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	authFile = filepath.Join(tmpDir, "auth.json")
+	defer func() { authFile = "" }()
 
 	store, err := LoadStore()
 	if err != nil {

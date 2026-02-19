@@ -17,16 +17,16 @@ import (
 type MCPClient struct {
 	name      string
 	transport string // "stdio" or "sse"
-	
+
 	// stdio transport
 	cmd    *exec.Cmd
 	stdin  io.Writer
 	stdout *bufio.Reader
 	stderr io.Reader
-	
+
 	// SSE transport
 	sseURL string
-	
+
 	// state
 	initialized atomic.Bool
 	nextID      atomic.Int64
@@ -40,31 +40,31 @@ func NewStdioClient(ctx context.Context, name, command string, args []string, cw
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
-	
+
 	// Set env vars
 	if len(env) > 0 {
 		cmd.Env = append(cmd.Environ(), envMapToSlice(env)...)
 	}
-	
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
-	
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
-	
+
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
-	
+
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start MCP server: %w", err)
 	}
-	
+
 	client := &MCPClient{
 		name:        name,
 		transport:   "stdio",
@@ -74,13 +74,13 @@ func NewStdioClient(ctx context.Context, name, command string, args []string, cw
 		stderr:      stderr,
 		pendingReqs: make(map[int64]chan *JSONRPCResponse),
 	}
-	
+
 	// Start goroutine to read responses
 	go client.readLoop()
-	
+
 	// Start goroutine to log stderr
 	go client.logStderr()
-	
+
 	return client, nil
 }
 
@@ -102,21 +102,21 @@ func (c *MCPClient) Initialize(ctx context.Context) error {
 			Version: "1.0.0",
 		},
 	}
-	
+
 	var result InitializeResult
 	if err := c.call(ctx, "initialize", params, &result); err != nil {
 		return fmt.Errorf("initialize failed: %w", err)
 	}
-	
+
 	c.initialized.Store(true)
-	
+
 	logger.InfoCF("mcp", "MCP server initialized",
 		map[string]interface{}{
 			"server":  c.name,
 			"version": result.ProtocolVersion,
 			"info":    result.ServerInfo.Name,
 		})
-	
+
 	return nil
 }
 
@@ -125,18 +125,18 @@ func (c *MCPClient) ListTools(ctx context.Context) ([]MCPToolDef, error) {
 	if !c.initialized.Load() {
 		return nil, fmt.Errorf("client not initialized")
 	}
-	
+
 	var result ToolsListResult
 	if err := c.call(ctx, "tools/list", nil, &result); err != nil {
 		return nil, fmt.Errorf("tools/list failed: %w", err)
 	}
-	
+
 	logger.InfoCF("mcp", "Listed MCP tools",
 		map[string]interface{}{
 			"server": c.name,
 			"count":  len(result.Tools),
 		})
-	
+
 	return result.Tools, nil
 }
 
@@ -145,17 +145,17 @@ func (c *MCPClient) CallTool(ctx context.Context, name string, args map[string]i
 	if !c.initialized.Load() {
 		return nil, fmt.Errorf("client not initialized")
 	}
-	
+
 	params := CallToolParams{
 		Name:      name,
 		Arguments: args,
 	}
-	
+
 	var result CallToolResult
 	if err := c.call(ctx, "tools/call", params, &result); err != nil {
 		return nil, fmt.Errorf("tools/call failed: %w", err)
 	}
-	
+
 	return &result, nil
 }
 
@@ -177,45 +177,45 @@ func (c *MCPClient) Close() error {
 // call sends a JSON-RPC request and waits for response
 func (c *MCPClient) call(ctx context.Context, method string, params interface{}, result interface{}) error {
 	id := c.nextID.Add(1)
-	
+
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  method,
 		Params:  params,
 	}
-	
+
 	// Create response channel
 	respChan := make(chan *JSONRPCResponse, 1)
 	c.mu.Lock()
 	c.pendingReqs[id] = respChan
 	c.mu.Unlock()
-	
+
 	defer func() {
 		c.mu.Lock()
 		delete(c.pendingReqs, id)
 		c.mu.Unlock()
 	}()
-	
+
 	// Send request
 	data, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
-	
+
 	if c.transport == "stdio" {
 		if _, err := c.stdin.Write(append(data, '\n')); err != nil {
 			return fmt.Errorf("failed to write request: %w", err)
 		}
 	}
-	
+
 	// Wait for response
 	select {
 	case resp := <-respChan:
 		if resp.Error != nil {
 			return fmt.Errorf("JSON-RPC error %d: %s", resp.Error.Code, resp.Error.Message)
 		}
-		
+
 		// Unmarshal result
 		if result != nil {
 			resultData, err := json.Marshal(resp.Result)
@@ -226,7 +226,7 @@ func (c *MCPClient) call(ctx context.Context, method string, params interface{},
 				return fmt.Errorf("failed to unmarshal result: %w", err)
 			}
 		}
-		
+
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -248,7 +248,7 @@ func (c *MCPClient) readLoop() {
 			c.Close()
 			return
 		}
-		
+
 		var resp JSONRPCResponse
 		if err := json.Unmarshal(line, &resp); err != nil {
 			logger.ErrorCF("mcp", "Failed to parse JSON-RPC response",
@@ -259,7 +259,7 @@ func (c *MCPClient) readLoop() {
 				})
 			continue
 		}
-		
+
 		// Route to waiting request
 		if resp.ID != nil {
 			var id int64
@@ -276,11 +276,11 @@ func (c *MCPClient) readLoop() {
 					})
 				continue
 			}
-			
+
 			c.mu.Lock()
 			ch, ok := c.pendingReqs[id]
 			c.mu.Unlock()
-			
+
 			if ok {
 				ch <- &resp
 			}
@@ -292,7 +292,7 @@ func (c *MCPClient) readLoop() {
 func (c *MCPClient) logStderr() {
 	scanner := bufio.NewScanner(c.stderr)
 	for scanner.Scan() {
-		logger.InfoCF("mcp", "MCP server stderr",
+		logger.DebugCF("mcp", "MCP server stderr",
 			map[string]interface{}{
 				"server": c.name,
 				"line":   scanner.Text(),

@@ -62,6 +62,26 @@ func (p *ClaudeCliProvider) GetDefaultModel() string {
 	return "claude-code"
 }
 
+func (p *ClaudeCliProvider) GetMaxTokens() int {
+	return 4096 // CLI handles its own tokens mostly
+}
+
+func (p *ClaudeCliProvider) GetTemperature() float64 {
+	return 1.0
+}
+
+func (p *ClaudeCliProvider) GetMaxToolIterations() int {
+	return 20
+}
+
+func (p *ClaudeCliProvider) GetTimeout() int {
+	return 300 // CLI might be slow
+}
+
+func (p *ClaudeCliProvider) GetMaxConcurrent() int {
+	return 1
+}
+
 // messagesToPrompt converts messages to a CLI-compatible prompt string.
 func (p *ClaudeCliProvider) messagesToPrompt(messages []Message) string {
 	var parts []string

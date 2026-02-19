@@ -177,42 +177,35 @@ picoclaw onboard
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "provider": "openrouter",   // 現在のプロバイダー
-      "model": "",                // 空の場合、プロバイダー固有のモデルが使用されます
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20
+      "provider": "ollama/llama3", // 構文: provider[/instance]
+      "model": "",                // オプション: プロバイダー設定にフォールバック
+      "max_tokens": 0,            // オプション: プロバイダー設定にフォールバック
+      "temperature": 0,           // オプション: プロバイダー設定にフォールバック
+      "max_tool_iterations": 0    // オプション: プロバイダー設定にフォールバック
     }
   },
   "providers": {
-    "openrouter": {
-      "model": "anthropic/claude-3.5-sonnet", // オプションのプロバイダー固有モデル
-      "api_key": "xxx",
-      "api_base": "https://openrouter.ai/api/v1"
-    }
-  },
-  "tools": {
-    "web": {
-      "search": {
-        "api_key": "YOUR_BRAVE_API_KEY",
-        "max_results": 5
+    "ollama": {
+      "llama3": {
+        "model": "llama3.2",
+        "api_base": "http://localhost:11434/v1",
+        "max_tokens": 4096
       }
-    },
-    "cron": {
-      "exec_timeout_minutes": 5
     }
-  },
-  "heartbeat": {
-    "enabled": true,
-    "interval": 30
   }
 }
 ```
 
+> [!TIP]
+> **設定の優先順位 (Configuration Hierarchy)**: 設定値（model, max_tokens, temperature, max_tool_iterations, timeout）は以下の順序で解決されます。
+> 1. `config.json` の `agents.defaults`（ゼロまたは空でない場合）
+> 2. `config.json` の `providers.<name>.<instance>`
+> 3. グローバル内部デフォルト（例: `glm-4.7`, `8192` トークンなど）
+
 **3. API キーの取得**
 
 - **LLM プロバイダー**: [OpenRouter](https://openrouter.ai/keys) · [Zhipu](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) · [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com/api-keys)
-- **Web 検索**（任意）: [Brave Search](https://brave.com/search/api) - 無料枠あり（月 2000 リクエスト）
+- **Web 検索**（任意）: [Brave Search API](https://brave.com/search/api) - 無料枠あり（月 2000 リクエスト）
 
 > **注意**: 完全な設定テンプレートは `config.example.json` を参照してください。
 
@@ -454,6 +447,29 @@ PicoClaw は設定されたワークスペース（デフォルト: `~/.picoclaw
 ├── TOOLS.md           # ツールの説明
 └── USER.md            # ユーザー設定
 ```
+
+### ワークスペース構成 (Workspaces)
+
+ユーザーを `config.json` で特定のワークスペースに関連付けることができます：
+
+```jsonc
+{
+  "workspaces": {
+    "dave": {
+      "path": "~/.picoclaw/workspace_dave",
+      "users": ["discord_id_1", "telegram_id_A"],
+      "restrict_to_workspace": true
+    },
+    "wife": {
+      "path": "~/.picoclaw/workspace_wife",
+      "users": ["discord_id_2"],
+      "restrict_to_workspace": false
+    }
+  }
+}
+```
+
+マッピングが見つからない場合、エージェントは `agents.defaults.workspace` で定義されたデフォルトのワークスペースを使用します。
 
 ### 🔒 セキュリティサンドボックス
 
@@ -710,6 +726,70 @@ HEARTBEAT_OK 応答         ユーザーが直接結果を受け取る
   "heartbeat": {
     "enabled": true,
     "interval": 30
+  }
+}
+```
+
+</details>
+
+#### 共通プロバイダーオプション
+
+すべてのプロバイダーは以下のオプション設定キーをサポートしています：
+- `model`: デフォルトモデルを上書き
+- `api_key`: プロバイダー API キー
+- `api_base`: カスタム API エンドポイント
+- `max_tokens`: 生成する最大トークン数
+- `temperature`: 創造性 (0.0 - 1.0)
+- `max_tool_iterations`: リクエストごとの最大ツール呼び出し回数
+- `timeout`: リクエストのタイムアウト（秒）
+- `max_concurrent_sessions`: 最大同時リクエスト数（デフォルト：1）
+
+### スケジュール設定
+
+<details>
+<summary><b>Schedule (スケジュール設定) 構成例</b></summary>
+
+Schedule プロバイダーを使用すると、時間帯や曜日によってモデルやプロバイダーを自動的に切り替えることができます。これは、コストの最適化（例：勤務時間中はより高性能なモデルを使用するなど）に役立ちます。
+
+`config.jsonc` を使用してコメントを追加できます。
+
+**構成例**
+
+```jsonc
+{
+  "agents": {
+    "defaults": {
+      // 特定のスケジュール構成を使用（例: "schedule/work"）
+      "provider": "schedule/work",
+      "model": "auto" // モデルはスケジューラーによって決定されます
+    }
+  },
+  "providers": {
+    // 複数のスケジュール構成を定義
+    "schedule": {
+      "work": {
+        "timezone": "Asia/Tokyo",
+        "default": {
+          "provider": "deepseek",
+          "model": "deepseek-chat"
+        },
+        "rules": [
+          {
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "hours": { "start": "09:00", "end": "18:00" },
+            "provider": "anthropic",
+            "model": "claude-3-5-sonnet-20241022"
+          }
+        ]
+      },
+      "weekend": {
+        "timezone": "Asia/Tokyo",
+        "default": {
+          "provider": "gemini",
+          "model": "gemini-2.0-flash-exp"
+        }
+      }
+    }
   }
 }
 ```

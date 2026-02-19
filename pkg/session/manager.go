@@ -46,6 +46,7 @@ func (sm *SessionManager) GetOrCreate(key string) *Session {
 
 	session, ok := sm.sessions[key]
 	if ok {
+		sm.ensureLoaded(key)
 		return session
 	}
 
@@ -81,6 +82,8 @@ func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Messag
 			Created:  time.Now(),
 		}
 		sm.sessions[sessionKey] = session
+	} else {
+		sm.ensureLoaded(sessionKey)
 	}
 
 	session.Messages = append(session.Messages, msg)
@@ -88,27 +91,29 @@ func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Messag
 }
 
 func (sm *SessionManager) GetHistory(key string) []providers.Message {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+	sm.mu.Lock() // Upgraded to write lock because it might trigger Disk I/O via ensureLoaded
+	defer sm.mu.Unlock()
 
 	session, ok := sm.sessions[key]
 	if !ok {
 		return []providers.Message{}
 	}
 
+	sm.ensureLoaded(key)
 	history := make([]providers.Message, len(session.Messages))
 	copy(history, session.Messages)
 	return history
 }
 
 func (sm *SessionManager) GetSummary(key string) string {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+	sm.mu.Lock() // Upgraded to write lock
+	defer sm.mu.Unlock()
 
 	session, ok := sm.sessions[key]
 	if !ok {
 		return ""
 	}
+	sm.ensureLoaded(key)
 	return session.Summary
 }
 
@@ -118,6 +123,7 @@ func (sm *SessionManager) SetSummary(key string, summary string) {
 
 	session, ok := sm.sessions[key]
 	if ok {
+		sm.ensureLoaded(key)
 		session.Summary = summary
 		session.Updated = time.Now()
 	}
@@ -132,6 +138,7 @@ func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 		return
 	}
 
+	sm.ensureLoaded(key)
 	if keepLast <= 0 {
 		session.Messages = []providers.Message{}
 		session.Updated = time.Now()
@@ -146,6 +153,28 @@ func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 	session.Updated = time.Now()
 }
 
+// DiscardFirst removes the first n messages from the session history.
+// This is used after summarization to safely remove ONLY the messages
+// that were actually included in the summary, avoiding race conditions
+// with new messages that might have arrived during LLM generation.
+func (sm *SessionManager) DiscardFirst(key string, n int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, ok := sm.sessions[key]
+	if !ok || n <= 0 {
+		return
+	}
+
+	sm.ensureLoaded(key)
+	if n >= len(session.Messages) {
+		session.Messages = []providers.Message{}
+	} else {
+		session.Messages = session.Messages[n:]
+	}
+	session.Updated = time.Now()
+}
+
 // sanitizeFilename converts a session key into a cross-platform safe filename.
 // Session keys use "channel:chatID" (e.g. "telegram:123456") but ':' is the
 // volume separator on Windows, so filepath.Base would misinterpret the key.
@@ -153,6 +182,35 @@ func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 // so loadSessions still maps back to the right in-memory key.
 func sanitizeFilename(key string) string {
 	return strings.ReplaceAll(key, ":", "_")
+}
+
+func (sm *SessionManager) ensureLoaded(key string) {
+	session, ok := sm.sessions[key]
+	if !ok || session.Messages != nil {
+		return
+	}
+
+	// Session exists but messages are nil (lazy loading state)
+	filename := sanitizeFilename(key)
+	sessionPath := filepath.Join(sm.storage, filename+".json")
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		// If file is missing, initialize as empty
+		session.Messages = []providers.Message{}
+		return
+	}
+
+	var loaded Session
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		session.Messages = []providers.Message{}
+		return
+	}
+
+	// Update existing record with loaded data
+	session.Messages = loaded.Messages
+	session.Summary = loaded.Summary
+	session.Created = loaded.Created
+	session.Updated = loaded.Updated
 }
 
 func (sm *SessionManager) Save(key string) error {
@@ -176,6 +234,19 @@ func (sm *SessionManager) Save(key string) error {
 	if !ok {
 		sm.mu.RUnlock()
 		return nil
+	}
+
+	// Ensure we have the data before saving!
+	// This is a bit tricky since ensureLoaded needs a write lock or its own internal lock.
+	// But Save is usually called after some modification which already loaded the data.
+	// To be safe, we check here.
+	if stored.Messages == nil {
+		sm.mu.RUnlock()
+		sm.mu.Lock()
+		sm.ensureLoaded(key)
+		stored = sm.sessions[key]
+		sm.mu.Unlock()
+		sm.mu.RLock()
 	}
 
 	snapshot := Session{
@@ -249,18 +320,28 @@ func (sm *SessionManager) loadSessions() error {
 			continue
 		}
 
+		// Lazy loading: Record that the session exists.
+		// We read the file once at startup to extract the canonical key.
+		// Message history remains nil until accessed via GetHistory/GetOrCreate.
 		sessionPath := filepath.Join(sm.storage, file.Name())
 		data, err := os.ReadFile(sessionPath)
 		if err != nil {
 			continue
 		}
-
-		var session Session
-		if err := json.Unmarshal(data, &session); err != nil {
+		
+		// Unmarshal only the key to build the index
+		var meta struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal(data, &meta); err != nil {
 			continue
 		}
 
-		sm.sessions[session.Key] = &session
+		// Initialize with nil messages to trigger lazy load on property access
+		sm.sessions[meta.Key] = &Session{
+			Key:      meta.Key,
+			Messages: nil, 
+		}
 	}
 
 	return nil
@@ -296,10 +377,10 @@ func (sm *SessionManager) RenameSession(oldKey, newKey string) error {
 	// Rename file using sanitized paths
 	oldFilename := sanitizeFilename(oldKey)
 	newFilename := sanitizeFilename(newKey)
-	
+
 	oldPath := filepath.Join(sm.storage, oldFilename+".json")
 	newPath := filepath.Join(sm.storage, newFilename+".json")
-	
+
 	logger.InfoCF("session", "RenameSession: physical rename", map[string]interface{}{"oldPath": oldPath, "newPath": newPath})
 	if err := os.Rename(oldPath, newPath); err != nil {
 		logger.WarnCF("session", "RenameSession: physical rename failed", map[string]interface{}{"error": err})
@@ -321,6 +402,7 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 
 	session, ok := sm.sessions[key]
 	if ok {
+		sm.ensureLoaded(key)
 		// Create a deep copy to strictly isolate internal state
 		// from the caller's slice.
 		msgs := make([]providers.Message, len(history))

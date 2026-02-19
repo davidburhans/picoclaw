@@ -4,16 +4,29 @@
       "name": "picoclaw",
       "workspace": "~/.picoclaw/workspace",
       "restrict_to_workspace": true,
-      "model": "glm-4.7",
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20,
+      "model": "",                // Optional: defaults to provider-specific model or "glm-4.7"
+      "max_tokens": 0,           // Optional: 0 means use provider default (e.g. 8192)
+      "temperature": 0,          // Optional: 0 means use provider default (e.g. 0.7)
+      "max_tool_iterations": 0,  // Optional: 0 means use provider default (e.g. 20)
+      "timeout": 0,              // Optional: 0 means use provider default (e.g. 120s)
       "subagent": {
         "max_iterations": 10,
         "max_depth": 5,
         "max_tokens": 8192,
         "temperature": 0.7
       }
+    }
+  },
+  "workspaces": {
+    "one": {
+      "path": "~/.picoclaw/workspace_one",
+      "users": ["discord_id_one", "telegram_id_one"],
+      "restrict_to_workspace": true
+    },
+    "two": {
+      "path": "~/.picoclaw/workspace_two",
+      "users": ["discord_id_two"],
+      "restrict_to_workspace": true
     }
   },
   "channels": {
@@ -88,7 +101,11 @@
     "openai": {
       "model": "gpt-4o",
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "max_tokens": 16384,
+      "temperature": 1.0,
+      "timeout": 300,
+      "max_concurrent_sessions": 1
     },
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
@@ -120,9 +137,55 @@
       "api_base": ""
     },
     "ollama": {
-      "model": "llama3.2",
-      "api_key": "",
-      "api_base": "http://localhost:11434/v1"
+      "llama": {
+        "model": "llama3.2",
+        "api_key": "",
+        "api_base": "http://localhost:11434/v1"
+      },
+      "gpt-oss": {
+        "model": "gpt-oss-120b",
+        "api_key": "",
+        "api_base": "http://localhost:1234/v1"
+      },
+      "llama3:70b": {
+        "model": "llama3:70b",
+        "api_base": "http://localhost:11434"
+      }
+    },
+    // Schedule Provider Configuration
+    // Supports both singleton object and multi-instance map format.
+    "schedule": {
+      // Example 1: Work Schedule (accessed via "provider": "schedule/work")
+      "work": {
+        "timezone": "America/New_York",
+        "rules": [
+          {
+            "days": ["mon", "tue", "wed", "thu", "fri"],
+            "hours": { "start": "09:00", "end": "17:00" },
+            "provider": "anthropic",
+            "model": "claude-3-5-sonnet-20240620"
+          }
+        ],
+        "default": {
+          "provider": "openai",
+          "model": "gpt-4o-mini"
+        }
+      },
+      // Example 2: Personal Schedule (accessed via "provider": "schedule/personal")
+      "personal": {
+        "timezone": "America/Los_Angeles",
+        "rules": [
+          {
+            "days": ["weekend"],
+            "provider": "ollama",
+            "model": "llama3"
+          }
+        ],
+        "default": {
+          "provider": "groq",
+          "model": "llama3-70b-8192"
+        }
+      }
     }
   },
   "tools": {

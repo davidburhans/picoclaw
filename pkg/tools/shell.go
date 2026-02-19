@@ -179,7 +179,17 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 	}
 
 	if t.restrictToWorkspace {
-		if strings.Contains(cmd, "..\\") || strings.Contains(cmd, "../") {
+		// Block obvious shell injection/chaining that could be used to bypass path checks
+		// or escape context. While we want to allow simple pipes/redirection within the wrapper,
+		// complex command sequences are risky.
+		// BUG-6 FIX: Allow pipes ('|') and redirections ('>', '<') but block chaining operators (';', '&')
+		// and command substitution ('`', '$').
+		if strings.ContainsAny(cmd, ";`$&\n\r") {
+			// Blocks compound commands to prevent shell injection escapes
+			return "Command blocked by safety guard (compound commands not allowed)"
+		}
+
+		if strings.Contains(cmd, "..") {
 			return "Command blocked by safety guard (path traversal detected)"
 		}
 
@@ -188,22 +198,30 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			return ""
 		}
 
-		pathPattern := regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
+		// Stricter path pattern: catch anything that looks like an absolute path or a path with separators
+		// We want to be greedy here and check everything that might be a path.
+		pathPattern := regexp.MustCompile(`(/[a-zA-Z0-9._\-/]+)|([a-zA-Z]:\\[a-zA-Z0-9._\\/\-]+)`)
 		matches := pathPattern.FindAllString(cmd, -1)
 
 		for _, raw := range matches {
+			// Skip single slashes or very short patterns that are likely not paths
+			if len(raw) < 2 {
+				continue
+			}
+
 			p, err := filepath.Abs(raw)
 			if err != nil {
 				continue
 			}
 
+			// Use the common validation logic if possible, or a local equivalent
 			rel, err := filepath.Rel(cwdPath, p)
 			if err != nil {
 				continue
 			}
 
 			if strings.HasPrefix(rel, "..") {
-				return "Command blocked by safety guard (path outside working dir)"
+				return fmt.Sprintf("Command blocked by safety guard (path outside working dir: %s)", raw)
 			}
 		}
 	}

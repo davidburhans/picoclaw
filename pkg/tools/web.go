@@ -539,20 +539,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		text = text[:maxChars]
 	}
 
-	result := map[string]interface{}{
-		"url":       urlStr,
-		"status":    resp.StatusCode,
-		"extractor": extractor,
-		"truncated": truncated,
-		"length":    len(text),
-		"text":      text,
-	}
-
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-
+	// BUG-7 FIX: Return actual content to LLM, not just a status message.
+	// Return a human-readable summary to the user, not raw JSON.
 	return &ToolResult{
-		ForLLM:  fmt.Sprintf("Fetched %d bytes from %s (extractor: %s, truncated: %v)", len(text), urlStr, extractor, truncated),
-		ForUser: string(resultJSON),
+		ForLLM:  text,
+		ForUser: fmt.Sprintf("Fetched content from %s (Status: %d, Length: %d chars, Extractor: %s, Truncated: %v)", urlStr, resp.StatusCode, len(text), extractor, truncated),
 	}
 }
 

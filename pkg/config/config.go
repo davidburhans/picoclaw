@@ -5,14 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/tidwall/jsonc"
 )
 
 // FlexibleStringSlice is a []string that also accepts JSON numbers,
 // so allow_from can contain both "123" and 123.
 type FlexibleStringSlice []string
+
+func BoolPtr(v bool) *bool { return &v }
+func IntPtr(v int) *int { return &v }
+func FloatPtr(v float64) *float64 { return &v }
 
 func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 	// Try []string first
@@ -44,15 +50,22 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 type Config struct {
-	Agents    AgentsConfig               `json:"agents"`
-	Channels  ChannelsConfig             `json:"channels"`
-	Providers ProvidersConfig            `json:"providers"`
-	Gateway   GatewayConfig              `json:"gateway"`
-	Tools     ToolsConfig                `json:"tools"`
-	MCP       map[string]MCPServerConfig `json:"mcp"`
-	Heartbeat HeartbeatConfig            `json:"heartbeat"`
-	Devices   DevicesConfig              `json:"devices"`
-	mu        sync.RWMutex
+	Agents     AgentsConfig               `json:"agents"`
+	Channels   ChannelsConfig             `json:"channels"`
+	Workspaces map[string]WorkspaceConfig `json:"workspaces"`
+	Providers  ProvidersConfig            `json:"providers"`
+	Gateway    GatewayConfig              `json:"gateway"`
+	Tools      ToolsConfig                `json:"tools"`
+	MCP        map[string]MCPServerConfig `json:"mcp"`
+	Heartbeat  HeartbeatConfig            `json:"heartbeat"`
+	Devices    DevicesConfig              `json:"devices"`
+	mu         sync.RWMutex
+}
+
+type WorkspaceConfig struct {
+	Path                string              `json:"path" env:"PICOCLAW_WORKSPACES_{{.Name}}_PATH"`
+	Users               FlexibleStringSlice `json:"users" env:"PICOCLAW_WORKSPACES_{{.Name}}_USERS"`
+	RestrictToWorkspace *bool               `json:"restrict_to_workspace"`
 }
 
 type AgentsConfig struct {
@@ -60,23 +73,23 @@ type AgentsConfig struct {
 }
 
 type AgentDefaults struct {
-	Name                string  `json:"name" env:"PICOCLAW_AGENTS_DEFAULTS_NAME"`
-	Workspace           string  `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace bool    `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	Provider            string  `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
-	Model               string  `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
-	MaxTokens           int     `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature         float64 `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations   int            `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	Timeout             int            `json:"timeout" env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT"` // seconds
+	Name                string         `json:"name" env:"PICOCLAW_AGENTS_DEFAULTS_NAME"`
+	Workspace           string         `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace *bool          `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	Provider            string         `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
+	Model               string         `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
+	MaxTokens           *int           `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature         *float64       `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations   *int           `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	Timeout             *int           `json:"timeout" env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT"` // seconds
 	Subagent            SubagentConfig `json:"subagent"`
 }
 
 type SubagentConfig struct {
-	MaxIterations int     `json:"max_iterations" env:"PICOCLAW_SUBAGENT_MAX_ITERATIONS"`
-	MaxTokens     int     `json:"max_tokens" env:"PICOCLAW_SUBAGENT_MAX_TOKENS"`
-	Temperature   float64 `json:"temperature" env:"PICOCLAW_SUBAGENT_TEMPERATURE"`
-	MaxDepth      int     `json:"max_depth" env:"PICOCLAW_SUBAGENT_MAX_DEPTH"`
+	MaxIterations *int     `json:"max_iterations" env:"PICOCLAW_SUBAGENT_MAX_ITERATIONS"`
+	MaxTokens     *int     `json:"max_tokens" env:"PICOCLAW_SUBAGENT_MAX_TOKENS"`
+	Temperature   *float64 `json:"temperature" env:"PICOCLAW_SUBAGENT_TEMPERATURE"`
+	MaxDepth      *int     `json:"max_depth" env:"PICOCLAW_SUBAGENT_MAX_DEPTH"`
 }
 
 type ChannelsConfig struct {
@@ -178,33 +191,208 @@ type DevicesConfig struct {
 }
 
 type ProvidersConfig struct {
-	Anthropic     ProviderConfig `json:"anthropic"`
-	OpenAI        ProviderConfig `json:"openai"`
-	OpenRouter    ProviderConfig `json:"openrouter"`
-	Groq          ProviderConfig `json:"groq"`
-	Zhipu         ProviderConfig `json:"zhipu"`
-	VLLM          ProviderConfig `json:"vllm"`
-	Gemini        ProviderConfig `json:"gemini"`
-	Nvidia        ProviderConfig `json:"nvidia"`
-	Ollama        ProviderConfig `json:"ollama"`
-	Moonshot      ProviderConfig `json:"moonshot"`
-	ShengSuanYun  ProviderConfig `json:"shengsuanyun"`
-	DeepSeek      ProviderConfig `json:"deepseek"`
-	GitHubCopilot ProviderConfig `json:"github_copilot"`
+	Anthropic    ProviderEntries `json:"anthropic"`
+	OpenAI       ProviderEntries `json:"openai"`
+	OpenRouter   ProviderEntries `json:"openrouter"`
+	Groq         ProviderEntries `json:"groq"`
+	Zhipu        ProviderEntries `json:"zhipu"`
+	VLLM         ProviderEntries `json:"vllm"`
+	Gemini       ProviderEntries `json:"gemini"`
+	Nvidia       ProviderEntries `json:"nvidia"`
+	Ollama       ProviderEntries `json:"ollama"`
+	Moonshot     ProviderEntries `json:"moonshot"`
+	ShengSuanYun ProviderEntries `json:"shengsuanyun"`
+	// Removed duplicate DeepSeek
+	DeepSeek      ProviderEntries `json:"deepseek"`
+	GitHubCopilot ProviderEntries `json:"github_copilot"`
+	Schedule      ScheduleEntries `json:"schedule,omitempty"`
+}
+
+type ScheduleEntries map[string]ScheduleConfig
+
+func (s *ScheduleEntries) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a map (new format)
+	var m map[string]ScheduleConfig
+	if err := json.Unmarshal(data, &m); err == nil {
+		// Heuristic: if it's a map, check if keys are named instances or ScheduleConfig fields.
+		// If the map contains known ScheduleConfig fields as keys, it's likely the old format.
+		isOldFormat := false
+		for k := range m {
+			switch strings.ToLower(k) {
+			case "timezone", "rules", "default":
+				isOldFormat = true
+			}
+			if isOldFormat {
+				break
+			}
+		}
+
+		if !isOldFormat && len(m) > 0 {
+			*s = m
+			return nil
+		}
+	}
+
+	// Try to unmarshal as a single config (old format)
+	var single ScheduleConfig
+	if err := json.Unmarshal(data, &single); err != nil {
+		return err
+	}
+	*s = ScheduleEntries{"": single}
+	return nil
+}
+
+func (s ScheduleEntries) MarshalJSON() ([]byte, error) {
+	// If it only contains the default entry, marshal as a single object
+	if len(s) == 1 {
+		if single, ok := s[""]; ok {
+			return json.Marshal(single)
+		}
+	}
+	// Otherwise marshal as a map
+	return json.Marshal(map[string]ScheduleConfig(s))
+}
+
+type ProviderEntries map[string]ProviderConfig
+
+func (p *ProviderEntries) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a map (new format)
+	var m map[string]ProviderConfig
+	if err := json.Unmarshal(data, &m); err == nil {
+		// Heuristic: if it's a map, check if keys are named instances or ProviderConfig fields.
+		// If the map contains known ProviderConfig fields as keys, it's likely the old format.
+		isOldFormat := false
+		for k := range m {
+			switch strings.ToLower(k) {
+			case "model", "api_key", "api_base", "proxy", "auth_method", "connect_mode", "max_tokens", "temperature", "max_tool_iterations", "timeout":
+				isOldFormat = true
+			}
+			if isOldFormat {
+				break
+			}
+		}
+
+		if !isOldFormat && len(m) > 0 {
+			*p = m
+			return nil
+		}
+	}
+
+	// Try to unmarshal as a single config (old format)
+	var single ProviderConfig
+	if err := json.Unmarshal(data, &single); err != nil {
+		return err
+	}
+	*p = ProviderEntries{"": single}
+	return nil
+}
+
+func (p ProviderEntries) MarshalJSON() ([]byte, error) {
+	// If it only contains the default entry, marshal as a single object
+	if len(p) == 1 {
+		if single, ok := p[""]; ok {
+			return json.Marshal(single)
+		}
+	}
+	// Otherwise marshal as a map
+	return json.Marshal(map[string]ProviderConfig(p))
 }
 
 type ProviderConfig struct {
-	Model       string `json:"model,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_MODEL"`
-	APIKey      string `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase     string `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy       string `json:"proxy,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
-	AuthMethod  string `json:"auth_method,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode string `json:"connect_mode,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` //only for Github Copilot, `stdio` or `grpc`
+	Model             string   `json:"model,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_MODEL"`
+	APIKey            string   `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
+	APIBase           string   `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
+	Proxy             string   `json:"proxy,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
+	AuthMethod        string   `json:"auth_method,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
+	ConnectMode       string   `json:"connect_mode,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` //only for Github Copilot, `stdio` or `grpc`
+	MaxTokens         *int     `json:"max_tokens,omitempty"`
+	Temperature       *float64 `json:"temperature,omitempty"`
+	MaxToolIterations *int     `json:"max_tool_iterations,omitempty"`
+	Timeout           *int     `json:"timeout,omitempty"`
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
+}
+
+type ScheduleConfig struct {
+	Timezone string          `json:"timezone,omitempty"` // IANA timezone, e.g. "America/Chicago"
+	Rules    []ScheduleRule  `json:"rules"`
+	Default  ScheduleDefault `json:"default"`
+}
+
+type ScheduleRule struct {
+	Days     []string       `json:"days,omitempty"`  // e.g. ["mon","tue"]
+	Hours    *ScheduleHours `json:"hours,omitempty"` // optional time window
+	Provider string         `json:"provider"`        // provider to use
+	Model    string         `json:"model,omitempty"` // optional model override
+}
+
+type ScheduleHours struct {
+	Start string `json:"start"` // "HH:MM" 24h format
+	End   string `json:"end"`   // "HH:MM" 24h format
+}
+
+type ScheduleDefault struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
 }
 
 type GatewayConfig struct {
 	Host string `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
 	Port int    `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
+}
+
+// ResolveProvider splits a provider string like "ollama/llama" into ("ollama", "llama")
+func ResolveProvider(providerStr string) (string, string) {
+	if idx := strings.Index(providerStr, "/"); idx != -1 {
+		return providerStr[:idx], providerStr[idx+1:]
+	}
+	if idx := strings.Index(providerStr, "."); idx != -1 {
+		return providerStr[:idx], providerStr[idx+1:]
+	}
+	return providerStr, ""
+}
+
+// Get returns the ProviderConfig for the given provider type and instance name.
+func (p *ProvidersConfig) Get(providerType, instanceName string) (ProviderConfig, bool) {
+	var entries ProviderEntries
+	switch strings.ToLower(providerType) {
+	case "anthropic", "claude":
+		entries = p.Anthropic
+	case "openai", "gpt":
+		entries = p.OpenAI
+	case "openrouter":
+		entries = p.OpenRouter
+	case "groq":
+		entries = p.Groq
+	case "zhipu", "glm":
+		entries = p.Zhipu
+	case "vllm":
+		entries = p.VLLM
+	case "gemini", "google":
+		entries = p.Gemini
+	case "nvidia":
+		entries = p.Nvidia
+	case "ollama":
+		entries = p.Ollama
+	case "moonshot":
+		entries = p.Moonshot
+	case "shengsuanyun":
+		entries = p.ShengSuanYun
+	case "deepseek":
+		entries = p.DeepSeek
+	case "github_copilot", "copilot":
+		entries = p.GitHubCopilot
+	default:
+		return ProviderConfig{}, false
+	}
+
+	cfg, ok := entries[instanceName]
+	if !ok && instanceName == "" && len(entries) > 0 {
+		// Fallback: if no instance name provided, use the first available one if "" is not set
+		for _, v := range entries {
+			return v, true
+		}
+	}
+	return cfg, ok
 }
 
 type BraveConfig struct {
@@ -230,7 +418,6 @@ type PerplexityConfig struct {
 	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
 }
 
-
 type WebToolsConfig struct {
 	Brave      BraveConfig      `json:"brave"`
 	DuckDuckGo DuckDuckGoConfig `json:"duckduckgo"`
@@ -249,32 +436,34 @@ type ToolsConfig struct {
 
 type MCPServerConfig struct {
 	Enabled   bool              `json:"enabled"`
-	Command   string            `json:"command,omitempty"`   // stdio transport
+	Command   string            `json:"command,omitempty"` // stdio transport
 	Args      []string          `json:"args,omitempty"`
-	Cwd       string            `json:"cwd,omitempty"`       // working directory
+	Cwd       string            `json:"cwd,omitempty"` // working directory
 	Env       map[string]string `json:"env,omitempty"`
-	URL       string            `json:"url,omitempty"`       // SSE transport  
+	URL       string            `json:"url,omitempty"`       // SSE transport
 	Transport string            `json:"transport,omitempty"` // "sse" (default for URL)
 }
 
 func DefaultConfig() *Config {
 	return &Config{
+		Workspaces: make(map[string]WorkspaceConfig),
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
 				Name:                "picoclaw",
 				Workspace:           "~/.picoclaw/workspace",
-				RestrictToWorkspace: true,
+				RestrictToWorkspace: BoolPtr(true),
 				Provider:            "",
 				Model:               "glm-4.7",
-				MaxTokens:           8192,
-				Temperature:         0.7,
-				MaxToolIterations:   20,
-				Timeout:             120, // default 2 minutes
+				MaxTokens:           IntPtr(0),
+				Temperature:         FloatPtr(0),
+				MaxToolIterations:   IntPtr(0),
+				Timeout:             IntPtr(0), // default 2 minutes
+
 				Subagent: SubagentConfig{
-					MaxIterations: 10,
-					MaxTokens:     8192,
-					Temperature:   0.7,
-					MaxDepth:      5,
+					MaxIterations: IntPtr(10),
+					MaxTokens:     IntPtr(8192),
+					Temperature:   FloatPtr(0.7),
+					MaxDepth:      IntPtr(5),
 				},
 			},
 		},
@@ -345,16 +534,16 @@ func DefaultConfig() *Config {
 			},
 		},
 		Providers: ProvidersConfig{
-			Anthropic:    ProviderConfig{},
-			OpenAI:       ProviderConfig{},
-			OpenRouter:   ProviderConfig{},
-			Groq:         ProviderConfig{},
-			Zhipu:        ProviderConfig{},
-			VLLM:         ProviderConfig{},
-			Gemini:       ProviderConfig{},
-			Nvidia:       ProviderConfig{},
-			Moonshot:     ProviderConfig{},
-			ShengSuanYun: ProviderConfig{},
+			Anthropic:    ProviderEntries{"": {}},
+			OpenAI:       ProviderEntries{"": {}},
+			OpenRouter:   ProviderEntries{"": {}},
+			Groq:         ProviderEntries{"": {}},
+			Zhipu:        ProviderEntries{"": {}},
+			VLLM:         ProviderEntries{"": {}},
+			Gemini:       ProviderEntries{"": {}},
+			Nvidia:       ProviderEntries{"": {}},
+			Moonshot:     ProviderEntries{"": {}},
+			ShengSuanYun: ProviderEntries{"": {}},
 		},
 		Gateway: GatewayConfig{
 			Host: "0.0.0.0",
@@ -408,6 +597,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Strip comments and trailing commas so we can use JSONC
+	data = jsonc.ToJSON(data)
+
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
@@ -439,35 +631,89 @@ func SaveConfig(path string, cfg *Config) error {
 func (c *Config) WorkspacePath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return expandHome(c.Agents.Defaults.Workspace)
+	return ExpandHome(c.Agents.Defaults.Workspace)
+}
+
+// ResolveWorkspace returns the workspace path for a sender ID, or the default path.
+func (c *Config) ResolveWorkspace(senderID string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if senderID != "" {
+		for _, ws := range c.Workspaces {
+			for _, user := range ws.Users {
+				if user == senderID {
+					return ExpandHome(ws.Path)
+				}
+			}
+		}
+	}
+
+	return ExpandHome(c.Agents.Defaults.Workspace)
+}
+
+// ResolveRestrictToWorkspace returns the restrict_to_workspace setting for a sender ID, or the global default.
+func (c *Config) ResolveRestrictToWorkspace(senderID string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if senderID != "" {
+		for _, ws := range c.Workspaces {
+			for _, user := range ws.Users {
+				if user == senderID {
+					if ws.RestrictToWorkspace != nil {
+						return *ws.RestrictToWorkspace
+					}
+					break
+				}
+			}
+		}
+	}
+
+	if c.Agents.Defaults.RestrictToWorkspace != nil {
+		return *c.Agents.Defaults.RestrictToWorkspace
+	}
+
+	return true
 }
 
 func (c *Config) GetAPIKey() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.Providers.OpenRouter.APIKey != "" {
-		return c.Providers.OpenRouter.APIKey
+
+	// Direct access changed to helper
+	check := func(e ProviderEntries) string {
+		for _, v := range e {
+			if v.APIKey != "" {
+				return v.APIKey
+			}
+		}
+		return ""
 	}
-	if c.Providers.Anthropic.APIKey != "" {
-		return c.Providers.Anthropic.APIKey
+
+	if key := check(c.Providers.OpenRouter); key != "" {
+		return key
 	}
-	if c.Providers.OpenAI.APIKey != "" {
-		return c.Providers.OpenAI.APIKey
+	if key := check(c.Providers.Anthropic); key != "" {
+		return key
 	}
-	if c.Providers.Gemini.APIKey != "" {
-		return c.Providers.Gemini.APIKey
+	if key := check(c.Providers.OpenAI); key != "" {
+		return key
 	}
-	if c.Providers.Zhipu.APIKey != "" {
-		return c.Providers.Zhipu.APIKey
+	if key := check(c.Providers.Gemini); key != "" {
+		return key
 	}
-	if c.Providers.Groq.APIKey != "" {
-		return c.Providers.Groq.APIKey
+	if key := check(c.Providers.Zhipu); key != "" {
+		return key
 	}
-	if c.Providers.VLLM.APIKey != "" {
-		return c.Providers.VLLM.APIKey
+	if key := check(c.Providers.Groq); key != "" {
+		return key
 	}
-	if c.Providers.ShengSuanYun.APIKey != "" {
-		return c.Providers.ShengSuanYun.APIKey
+	if key := check(c.Providers.VLLM); key != "" {
+		return key
+	}
+	if key := check(c.Providers.ShengSuanYun); key != "" {
+		return key
 	}
 	return ""
 }
@@ -475,29 +721,40 @@ func (c *Config) GetAPIKey() string {
 func (c *Config) GetAPIBase() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.Providers.OpenRouter.APIKey != "" {
-		if c.Providers.OpenRouter.APIBase != "" {
-			return c.Providers.OpenRouter.APIBase
+
+	// Check OpenRouter
+	for _, v := range c.Providers.OpenRouter {
+		if v.APIKey != "" {
+			if v.APIBase != "" {
+				return v.APIBase
+			}
+			return "https://openrouter.ai/api/v1"
 		}
-		return "https://openrouter.ai/api/v1"
 	}
-	if c.Providers.Zhipu.APIKey != "" {
-		return c.Providers.Zhipu.APIBase
+	// Check Zhipu
+	for _, v := range c.Providers.Zhipu {
+		if v.APIKey != "" {
+			return v.APIBase
+		}
 	}
-	if c.Providers.VLLM.APIKey != "" && c.Providers.VLLM.APIBase != "" {
-		return c.Providers.VLLM.APIBase
+	// Check VLLM
+	for _, v := range c.Providers.VLLM {
+		if v.APIKey != "" && v.APIBase != "" {
+			return v.APIBase
+		}
 	}
 	return ""
 }
 
-func expandHome(path string) string {
+func ExpandHome(path string) string {
 	if path == "" {
 		return path
 	}
 	if path[0] == '~' {
 		home, _ := os.UserHomeDir()
-		if len(path) > 1 && path[1] == '/' {
-			return home + path[1:]
+		// BUG-10 FIX: Handle both forward and backward slashes (Windows)
+		if len(path) > 1 && (path[1] == '/' || path[1] == '\\') {
+			return filepath.Join(home, path[2:])
 		}
 		return home
 	}

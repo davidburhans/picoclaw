@@ -15,18 +15,38 @@ import (
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
-// mockProvider is a simple mock LLM provider for testing
-type mockProvider struct{}
+// testMockProvider is a simple mock LLM provider for testing
+type testMockProvider struct{}
 
-func (m *mockProvider) Chat(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, opts map[string]interface{}) (*providers.LLMResponse, error) {
+func (m *testMockProvider) Chat(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, opts map[string]interface{}) (*providers.LLMResponse, error) {
 	return &providers.LLMResponse{
 		Content:   "Mock response",
 		ToolCalls: []providers.ToolCall{},
 	}, nil
 }
 
-func (m *mockProvider) GetDefaultModel() string {
+func (m *testMockProvider) GetDefaultModel() string {
 	return "mock-model"
+}
+
+func (m *testMockProvider) GetMaxTokens() int {
+	return 4096
+}
+
+func (m *testMockProvider) GetTemperature() float64 {
+	return 0.7
+}
+
+func (m *testMockProvider) GetMaxToolIterations() int {
+	return 10
+}
+
+func (m *testMockProvider) GetTimeout() int {
+	return 120
+}
+
+func (m *testMockProvider) GetMaxConcurrent() int {
+	return 1
 }
 
 func TestRecordLastChannel(t *testing.T) {
@@ -43,34 +63,34 @@ func TestRecordLastChannel(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	// Test RecordLastChannel
 	testChannel := "test-channel"
-	err = al.RecordLastChannel(testChannel)
+	err = al.RecordLastChannel(al.getOrCreateWorkspaceContext(""), testChannel)
 	if err != nil {
 		t.Fatalf("RecordLastChannel failed: %v", err)
 	}
 
 	// Verify channel was saved
-	lastChannel := al.state.GetLastChannel()
+	lastChannel := al.GetStateManager().GetLastChannel()
 	if lastChannel != testChannel {
 		t.Errorf("Expected channel '%s', got '%s'", testChannel, lastChannel)
 	}
 
 	// Verify persistence by creating a new agent loop
 	al2 := NewAgentLoop(cfg, msgBus, provider)
-	if al2.state.GetLastChannel() != testChannel {
-		t.Errorf("Expected persistent channel '%s', got '%s'", testChannel, al2.state.GetLastChannel())
+	if al2.GetStateManager().GetLastChannel() != testChannel {
+		t.Errorf("Expected persistent channel '%s', got '%s'", testChannel, al2.GetStateManager().GetLastChannel())
 	}
 }
 
@@ -88,34 +108,34 @@ func TestRecordLastChatID(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	// Test RecordLastChatID
 	testChatID := "test-chat-id-123"
-	err = al.RecordLastChatID(testChatID)
+	err = al.RecordLastChatID(al.getOrCreateWorkspaceContext(""), testChatID)
 	if err != nil {
 		t.Fatalf("RecordLastChatID failed: %v", err)
 	}
 
 	// Verify chat ID was saved
-	lastChatID := al.state.GetLastChatID()
+	lastChatID := al.GetStateManager().GetLastChatID()
 	if lastChatID != testChatID {
 		t.Errorf("Expected chat ID '%s', got '%s'", testChatID, lastChatID)
 	}
 
 	// Verify persistence by creating a new agent loop
 	al2 := NewAgentLoop(cfg, msgBus, provider)
-	if al2.state.GetLastChatID() != testChatID {
-		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, al2.state.GetLastChatID())
+	if al2.GetStateManager().GetLastChatID() != testChatID {
+		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, al2.GetStateManager().GetLastChatID())
 	}
 }
 
@@ -133,19 +153,19 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	// Verify state manager is initialized
-	if al.state == nil {
+	if al.GetStateManager() == nil {
 		t.Error("Expected state manager to be initialized")
 	}
 
@@ -169,14 +189,14 @@ func TestToolRegistry_ToolRegistration(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	// Register a custom tool
@@ -215,8 +235,8 @@ func TestToolContext_Updates(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
@@ -246,14 +266,14 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	// Register a test tool and verify it shows up in startup info
@@ -290,14 +310,14 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	info := al.GetStartupInfo()
@@ -326,6 +346,7 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 
 // TestAgentLoop_Stop verifies Stop() sets running to false
 func TestAgentLoop_Stop(t *testing.T) {
+
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -337,14 +358,14 @@ func TestAgentLoop_Stop(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
 	msgBus := bus.NewMessageBus()
-	provider := &mockProvider{}
+	provider := &testMockProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	// Note: running is only set to true when Run() is called
@@ -373,6 +394,26 @@ func (m *simpleMockProvider) Chat(ctx context.Context, messages []providers.Mess
 
 func (m *simpleMockProvider) GetDefaultModel() string {
 	return "mock-model"
+}
+
+func (m *simpleMockProvider) GetMaxTokens() int {
+	return 4096
+}
+
+func (m *simpleMockProvider) GetTemperature() float64 {
+	return 0.7
+}
+
+func (m *simpleMockProvider) GetMaxToolIterations() int {
+	return 10
+}
+
+func (m *simpleMockProvider) GetTimeout() int {
+	return 120
+}
+
+func (m *simpleMockProvider) GetMaxConcurrent() int {
+	return 1
 }
 
 // mockCustomTool is a simple mock tool for registration testing
@@ -459,8 +500,8 @@ func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
@@ -501,8 +542,8 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
@@ -530,10 +571,6 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestAgentLoop_SessionRotation(t *testing.T) {
-	// Create temp workspace
-=======
 // failFirstMockProvider fails on the first N calls with a specific error
 type failFirstMockProvider struct {
 	failures    int
@@ -557,31 +594,118 @@ func (m *failFirstMockProvider) GetDefaultModel() string {
 	return "mock-fail-model"
 }
 
+func (m *failFirstMockProvider) GetMaxTokens() int {
+	return 4096
+}
+
+func (m *failFirstMockProvider) GetTemperature() float64 {
+	return 0.7
+}
+
+func (m *failFirstMockProvider) GetMaxToolIterations() int {
+	return 10
+}
+
+func (m *failFirstMockProvider) GetTimeout() int {
+	return 120
+}
+
+func (m *failFirstMockProvider) GetMaxConcurrent() int {
+	return 1
+}
+
 // TestAgentLoop_ContextExhaustionRetry verify that the agent retries on context errors
 func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
->>>>>>> 920e30a241313544ad735f78e0d5590f1a0b9c1f
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-<<<<<<< HEAD
-	// Create test config
-=======
->>>>>>> 920e30a241313544ad735f78e0d5590f1a0b9c1f
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
 
-<<<<<<< HEAD
+	msgBus := bus.NewMessageBus()
+
+	// Create a provider that fails once with a context error
+	contextErr := fmt.Errorf("InvalidParameter: Total tokens of image and text exceed max message tokens")
+	provider := &failFirstMockProvider{
+		failures:    1,
+		failError:   contextErr,
+		successResp: "Recovered from context error",
+	}
+
+	al := NewAgentLoop(cfg, msgBus, provider)
+
+	// Inject some history to simulate a full context
+	sessionKey := "test-session-context"
+	// Create dummy history
+	history := []providers.Message{
+		{Role: "system", Content: "System prompt"},
+		{Role: "user", Content: "Old message 1"},
+		{Role: "assistant", Content: "Old response 1"},
+		{Role: "user", Content: "Old message 2"},
+		{Role: "assistant", Content: "Old response 2"},
+		{Role: "user", Content: "Trigger message"},
+	}
+	al.GetSessionManager().SetHistory(sessionKey, history)
+
+	// Call ProcessDirectWithChannel
+	// Note: ProcessDirectWithChannel calls processMessage which will execute runLLMIteration
+	response, err := al.ProcessDirectWithChannel(context.Background(), "Trigger message", sessionKey, "test", "test-chat")
+
+	if err != nil {
+		t.Fatalf("Expected success after retry, got error: %v", err)
+	}
+
+	if response != "Recovered from context error" {
+		t.Errorf("Expected 'Recovered from context error', got '%s'", response)
+	}
+
+	// We expect 2 calls: 1st failed, 2nd succeeded
+	if provider.currentCall != 2 {
+		t.Errorf("Expected 2 calls (1 fail + 1 success), got %d", provider.currentCall)
+	}
+
+	// Check final history length
+	finalHistory := al.GetSessionManager().GetHistory(sessionKey)
+	// We verify that the history has been modified (compressed)
+	// Original length: 6
+	// Expected behavior: compression drops ~50% of history (mid slice)
+	// We can assert that the length is NOT what it would be without compression.
+	// Without compression: 6 + 1 (new user msg) + 1 (assistant msg) = 8
+	if len(finalHistory) >= 8 {
+		t.Errorf("Expected history to be compressed (len < 8), got %d", len(finalHistory))
+	}
+}
+
+func TestAgentLoop_SessionRotation(t *testing.T) {
+	// Create temp workspace
+	tmpDir, err := os.MkdirTemp("", "agent-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				Model:             "test-model",
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
+			},
+		},
+	}
+
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "Test response"}
@@ -599,23 +723,23 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		Content:    "!new my-task",
 		SessionKey: "discord_123",
 	}
-    
-    // Add initial session file for RenameSession to succeed
-    al.sessions.AddMessage("discord_123", "system", "Initial session")
-    al.sessions.Save("discord_123")
+
+	// Add initial session file for RenameSession to succeed
+	al.GetSessionManager().AddMessage("discord_123", "system", "Initial session")
+	al.GetSessionManager().Save("discord_123")
 
 	response1, err := al.processMessage(ctx, msg1)
 	if err != nil {
 		t.Fatalf("Failed to process !new: %v", err)
 	}
-	
+
 	// Verify response contains "Started new session"
 	if !strings.Contains(response1, "Started new session") {
 		t.Errorf("Expected confirmation of new session, got: %s", response1)
 	}
 
 	// 2. Verify state updated
-	activeSession := al.state.GetActiveSession("discord_123")
+	activeSession := al.GetActiveSession("discord_123")
 	// Should be: discord_123_v1 (unnamed, since name is for archive)
 	expectedKey := "discord_123_v1"
 	if activeSession != expectedKey {
@@ -630,7 +754,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		SessionKey: "discord_123",
 	}
 	response2 := helper.executeAndGetResponse(t, ctx, msg2)
-	
+
 	if response2 != "Test response" {
 		t.Errorf("Expected 'Test response', got: %s", response2)
 	}
@@ -640,7 +764,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 	// Save() uses session key as filename.
 	// We updated msg.SessionKey to effectiveSessionKey before calling runAgentLoop.
 	// So it should save to discord_123_v1.json
-	
+
 	newSessionPath := filepath.Join(tmpDir, "sessions", expectedKey+".json")
 	if _, err := os.Stat(newSessionPath); os.IsNotExist(err) {
 		t.Errorf("Expected session file %s to exist in %s", expectedKey+".json", filepath.Join(tmpDir, "sessions"))
@@ -661,8 +785,8 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         4096,
-				MaxToolIterations: 10,
+				MaxTokens:         config.IntPtr(4096),
+				MaxToolIterations: config.IntPtr(10),
 			},
 		},
 	}
@@ -681,7 +805,7 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 		content       string
 		sessionKey    string
 		expectedKey   string // Active key is v1
-        archiveName   string // For verification string
+		archiveName   string // For verification string
 		shouldSucceed bool
 	}{
 		{
@@ -691,7 +815,7 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 			content:       "  !new cli-task",
 			sessionKey:    "cli_console",
 			expectedKey:   "cli_console_v1",
-            archiveName:   "cli_console_cli-task",
+			archiveName:   "cli_console_cli-task",
 			shouldSucceed: true,
 		},
 		{
@@ -701,7 +825,7 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 			content:       "!new tg-task",
 			sessionKey:    "telegram_12345",
 			expectedKey:   "telegram_12345_v1",
-            archiveName:   "telegram_12345_tg-task",
+			archiveName:   "telegram_12345_tg-task",
 			shouldSucceed: true,
 		},
 		{
@@ -711,7 +835,7 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 			content:       " \t !new discord-task \n ",
 			sessionKey:    "discord_9876",
 			expectedKey:   "discord_9876_v1",
-            archiveName:   "discord_9876_discord-task",
+			archiveName:   "discord_9876_discord-task",
 			shouldSucceed: true,
 		},
 		{
@@ -721,7 +845,7 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 			content:       "!new",
 			sessionKey:    "cli_console-auto",
 			expectedKey:   "cli_console-auto_v1",
-            archiveName:   "cli_console-auto_Test_response", // Mock provider returns "Test response"
+			archiveName:   "cli_console-auto_Test_response", // Mock provider returns "Test response"
 			shouldSucceed: true,
 		},
 	}
@@ -734,35 +858,35 @@ func TestAgentLoop_SessionRotation_CrossChannel(t *testing.T) {
 				Content:    tc.content,
 				SessionKey: tc.sessionKey,
 			}
-            
-            // Add a message to history so auto-gen has something to summarize
-            if strings.TrimSpace(tc.content) == "!new" {
-                al.sessions.AddMessage(tc.sessionKey, "user", "History context")
-            }
+
+			// Add a message to history so auto-gen has something to summarize
+			if strings.TrimSpace(tc.content) == "!new" {
+				al.GetSessionManager().AddMessage(tc.sessionKey, "user", "History context")
+			}
 
 			// Add initial session file for RenameSession to succeed
-			al.sessions.AddMessage(tc.sessionKey, "system", "Initial session")
-			al.sessions.Save(tc.sessionKey)
-			
+			al.GetSessionManager().AddMessage(tc.sessionKey, "system", "Initial session")
+			al.GetSessionManager().Save(tc.sessionKey)
+
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
 				t.Fatalf("Failed to process !new: %v", err)
 			}
-			
+
 			if !strings.Contains(response, "Started new session") {
 				t.Errorf("Expected confirmation of new session, got: %s", response)
 			}
-			
+
 			if !strings.Contains(response, "Archived previous session as:") {
 				t.Errorf("Expected mention of archived session, got: %s", response)
 			}
-            
-            if !strings.Contains(response, tc.archiveName) {
-                t.Errorf("Expected archive name '%s' in response, got: %s", tc.archiveName, response)
-            }
+
+			if !strings.Contains(response, tc.archiveName) {
+				t.Errorf("Expected archive name '%s' in response, got: %s", tc.archiveName, response)
+			}
 
 			// Verify state updated
-			activeSession := al.state.GetActiveSession(tc.sessionKey)
+			activeSession := al.GetActiveSession(tc.sessionKey)
 			if activeSession != tc.expectedKey {
 				t.Errorf("Expected active session '%s', got '%s'", tc.expectedKey, activeSession)
 			}
@@ -812,58 +936,5 @@ func TestGenerateSessionSummary_Truncation(t *testing.T) {
 	expectedPrefix := "this_is_a_very_long_session"
 	if summary != expectedPrefix {
 		t.Errorf("Expected summary '%s', got '%s'", expectedPrefix, summary)
-=======
-	msgBus := bus.NewMessageBus()
-
-	// Create a provider that fails once with a context error
-	contextErr := fmt.Errorf("InvalidParameter: Total tokens of image and text exceed max message tokens")
-	provider := &failFirstMockProvider{
-		failures:    1,
-		failError:   contextErr,
-		successResp: "Recovered from context error",
-	}
-
-	al := NewAgentLoop(cfg, msgBus, provider)
-
-	// Inject some history to simulate a full context
-	sessionKey := "test-session-context"
-	// Create dummy history
-	history := []providers.Message{
-		{Role: "system", Content: "System prompt"},
-		{Role: "user", Content: "Old message 1"},
-		{Role: "assistant", Content: "Old response 1"},
-		{Role: "user", Content: "Old message 2"},
-		{Role: "assistant", Content: "Old response 2"},
-		{Role: "user", Content: "Trigger message"},
-	}
-	al.sessions.SetHistory(sessionKey, history)
-
-	// Call ProcessDirectWithChannel
-	// Note: ProcessDirectWithChannel calls processMessage which will execute runLLMIteration
-	response, err := al.ProcessDirectWithChannel(context.Background(), "Trigger message", sessionKey, "test", "test-chat")
-
-	if err != nil {
-		t.Fatalf("Expected success after retry, got error: %v", err)
-	}
-
-	if response != "Recovered from context error" {
-		t.Errorf("Expected 'Recovered from context error', got '%s'", response)
-	}
-
-	// We expect 2 calls: 1st failed, 2nd succeeded
-	if provider.currentCall != 2 {
-		t.Errorf("Expected 2 calls (1 fail + 1 success), got %d", provider.currentCall)
-	}
-
-	// Check final history length
-	finalHistory := al.sessions.GetHistory(sessionKey)
-	// We verify that the history has been modified (compressed)
-	// Original length: 6
-	// Expected behavior: compression drops ~50% of history (mid slice)
-	// We can assert that the length is NOT what it would be without compression.
-	// Without compression: 6 + 1 (new user msg) + 1 (assistant msg) = 8
-	if len(finalHistory) >= 8 {
-		t.Errorf("Expected history to be compressed (len < 8), got %d", len(finalHistory))
->>>>>>> 920e30a241313544ad735f78e0d5590f1a0b9c1f
 	}
 }

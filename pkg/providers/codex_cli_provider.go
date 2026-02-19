@@ -84,6 +84,26 @@ func (p *CodexCliProvider) GetDefaultModel() string {
 	return "codex-cli"
 }
 
+func (p *CodexCliProvider) GetMaxTokens() int {
+	return 4096
+}
+
+func (p *CodexCliProvider) GetTemperature() float64 {
+	return 1.0
+}
+
+func (p *CodexCliProvider) GetMaxToolIterations() int {
+	return 20
+}
+
+func (p *CodexCliProvider) GetTimeout() int {
+	return 300
+}
+
+func (p *CodexCliProvider) GetMaxConcurrent() int {
+	return 1
+}
+
 // buildPrompt converts messages to a prompt string for the Codex CLI.
 // System messages are prepended as instructions since Codex CLI has no --system-prompt flag.
 func (p *CodexCliProvider) buildPrompt(messages []Message, tools []ToolDefinition) string {

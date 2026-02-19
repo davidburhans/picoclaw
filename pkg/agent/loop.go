@@ -31,22 +31,52 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
+type workspaceContext struct {
+	path           string
+	tools          *tools.ToolRegistry
+	sessions       *session.SessionManager
+	state          *state.Manager
+	contextBuilder *ContextBuilder
+	mu             sync.Mutex // protects lazy init
+}
+
 type AgentLoop struct {
 	bus            *bus.MessageBus
 	provider       providers.LLMProvider
-	workspace      string
+	config         *config.Config
+	defaultWS      string
 	model          string
 	contextWindow  int // Maximum context window size in tokens
 	maxIterations  int
 	timeout        time.Duration // Session timeout
-	sessions       *session.SessionManager
-	state          *state.Manager
-	contextBuilder *ContextBuilder
-	tools          *tools.ToolRegistry
-	mcpManager     *mcp.MCPManager
+	workspaces     map[string]*workspaceContext
+	wsMu           sync.RWMutex // protects workspaces map
 	running        atomic.Bool
 	summarizing    sync.Map // Tracks which sessions are currently being summarized
+	sessionLocks   sync.Map // Per-session mutexes to prevent concurrent processing
 	channelManager *channels.Manager
+
+	// Concurrency control
+	wg               sync.WaitGroup
+	sem              chan struct{}
+	summarizationSem chan struct{}
+}
+
+type workspaceSessionController struct {
+	al   *AgentLoop
+	wctx *workspaceContext
+}
+
+func (wsc *workspaceSessionController) RotateSession(ctx context.Context, baseKey, archiveName string) (string, string, error) {
+	return wsc.al.RotateSession(ctx, baseKey, archiveName, wsc.wctx)
+}
+
+func (wsc *workspaceSessionController) GetSessionManager() *session.SessionManager {
+	return wsc.wctx.sessions
+}
+
+func (wsc *workspaceSessionController) GetActiveSession(baseKey string) string {
+	return wsc.wctx.state.GetActiveSession(baseKey)
 }
 
 // processOptions configures how a message is processed
@@ -104,7 +134,7 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	// Subagent uses it to communicate directly with user
 	messageTool := tools.NewMessageTool()
 	messageTool.SetSendCallback(func(channel, chatID, content string) error {
-		msgBus.PublishOutbound(bus.OutboundMessage{
+		msgBus.PublishOutbound(context.Background(), bus.OutboundMessage{
 			Channel: channel,
 			ChatID:  chatID,
 			Content: content,
@@ -152,24 +182,153 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
-	workspace := cfg.WorkspacePath()
-	os.MkdirAll(workspace, 0755)
+	defaultWS := cfg.WorkspacePath()
+	os.MkdirAll(defaultWS, 0755)
 
-	restrict := cfg.Agents.Defaults.RestrictToWorkspace
+	// Resolve configuration values (fallback to provider if unset in config)
+	model := cfg.Agents.Defaults.Model
+	if model == "" {
+		model = provider.GetDefaultModel()
+	}
+
+	maxTokens := provider.GetMaxTokens()
+	if cfg.Agents.Defaults.MaxTokens != nil {
+		maxTokens = *cfg.Agents.Defaults.MaxTokens
+	}
+
+	maxToolIterations := provider.GetMaxToolIterations()
+	if cfg.Agents.Defaults.MaxToolIterations != nil {
+		maxToolIterations = *cfg.Agents.Defaults.MaxToolIterations
+	}
+
+	timeoutSec := provider.GetTimeout()
+	if cfg.Agents.Defaults.Timeout != nil {
+		timeoutSec = *cfg.Agents.Defaults.Timeout
+	}
+	timeout := time.Duration(timeoutSec) * time.Second
+
+	// Check for provider-specific overrides (now using pointers)
+	providerType, instanceName := config.ResolveProvider(cfg.Agents.Defaults.Provider)
+	if pCfg, ok := cfg.Providers.Get(providerType, instanceName); ok {
+		if pCfg.Model != "" {
+			model = pCfg.Model
+		}
+		if pCfg.MaxTokens != nil {
+			maxTokens = *pCfg.MaxTokens
+		}
+		if pCfg.Temperature != nil {
+			// temperature is handled in subagent or directly in Chat calls
+		}
+		if pCfg.MaxToolIterations != nil {
+			maxToolIterations = *pCfg.MaxToolIterations
+		}
+		if pCfg.Timeout != nil {
+			timeout = time.Duration(*pCfg.Timeout) * time.Second
+		}
+	}
+
+	maxConcurrentSessions := provider.GetMaxConcurrent()
+	if maxConcurrentSessions <= 0 {
+		maxConcurrentSessions = 1
+	}
+
+	al := &AgentLoop{
+		bus:           msgBus,
+		provider:      provider,
+		config:        cfg,
+		defaultWS:     defaultWS,
+		model:         model,
+		contextWindow: maxTokens,
+		maxIterations: maxToolIterations,
+		timeout:       timeout,
+		workspaces:    make(map[string]*workspaceContext),
+		summarizing:   sync.Map{},
+		sessionLocks:     sync.Map{},
+		sem:              make(chan struct{}, maxConcurrentSessions),
+		summarizationSem: make(chan struct{}, 3), // Limit concurrent summarization tasks to 3
+	}
+
+	// Pre-initialize default workspace
+	al.getOrCreateWorkspaceContext("")
+
+	return al
+}
+
+func (al *AgentLoop) getOrCreateWorkspaceContext(senderID string) *workspaceContext {
+	path := al.config.ResolveWorkspace(senderID)
+	return al.getOrCreateWorkspaceContextByPath(path)
+}
+
+func (al *AgentLoop) getOrCreateWorkspaceContextByPath(path string) *workspaceContext {
+	al.wsMu.Lock()
+	wctx, ok := al.workspaces[path]
+	if !ok {
+		wctx = &workspaceContext{path: path}
+		al.workspaces[path] = wctx
+	}
+	al.wsMu.Unlock()
+
+	wctx.mu.Lock()
+	defer wctx.mu.Unlock()
+
+	if wctx.tools == nil {
+		al.initWorkspaceContext(wctx)
+	}
+
+	return wctx
+}
+
+func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
+	workspace := wctx.path
+	os.MkdirAll(workspace, 0755)
+	
+	restrict := true
+	if al.config.Agents.Defaults.RestrictToWorkspace != nil {
+		restrict = *al.config.Agents.Defaults.RestrictToWorkspace
+	}
+
+	// Check for workspace-specific override
+	for _, ws := range al.config.Workspaces {
+		if config.ExpandHome(ws.Path) == workspace {
+			if ws.RestrictToWorkspace != nil {
+				restrict = *ws.RestrictToWorkspace
+			}
+			break
+		}
+	}
 
 	// Create tool registry for main agent
-	toolsRegistry := createToolRegistry(workspace, restrict, cfg, msgBus)
+	toolsRegistry := createToolRegistry(workspace, restrict, al.config, al.bus)
 
-	// Create subagent manager with its own tool registry
-	subagentManager := tools.NewSubagentManager(provider, cfg.Agents.Defaults.Model, workspace, msgBus)
-	subagentManager.SetMaxIterations(cfg.Agents.Defaults.Subagent.MaxIterations)
-	subagentManager.SetMaxDepth(cfg.Agents.Defaults.Subagent.MaxDepth)
-	subagentManager.SetMaxTokens(cfg.Agents.Defaults.Subagent.MaxTokens)
-	subagentManager.SetTemperature(cfg.Agents.Defaults.Subagent.Temperature)
+	// Create subagent manager
+	subagentManager := tools.NewSubagentManager(al.provider, al.model, workspace, al.bus)
 
-	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus)
-	// Subagent doesn't need spawn/subagent tools to avoid recursion by default
-	// but can use report_completion to signal success.
+	// Apply subagent config
+	maxIterations := al.maxIterations
+	if al.config.Agents.Defaults.Subagent.MaxIterations != nil {
+		maxIterations = *al.config.Agents.Defaults.Subagent.MaxIterations
+	}
+	subagentManager.SetMaxIterations(maxIterations)
+
+	maxDepth := 5
+	if al.config.Agents.Defaults.Subagent.MaxDepth != nil {
+		maxDepth = *al.config.Agents.Defaults.Subagent.MaxDepth
+	}
+	subagentManager.SetMaxDepth(maxDepth)
+
+	maxTokens := al.contextWindow
+	if al.config.Agents.Defaults.Subagent.MaxTokens != nil {
+		maxTokens = *al.config.Agents.Defaults.Subagent.MaxTokens
+	}
+	subagentManager.SetMaxTokens(maxTokens)
+
+	temp := al.provider.GetTemperature()
+	if al.config.Agents.Defaults.Subagent.Temperature != nil {
+		temp = *al.config.Agents.Defaults.Subagent.Temperature
+	}
+	subagentManager.SetTemperature(temp)
+
+	subagentTools := createToolRegistry(workspace, restrict, al.config, al.bus)
 	subagentTools.Register(&tools.ReportCompletionTool{})
 	subagentManager.SetTools(subagentTools)
 
@@ -181,26 +340,24 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	subagentTool := tools.NewSubagentTool(subagentManager, workspace, restrict)
 	toolsRegistry.Register(subagentTool)
 
-	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
-
-	// Create state manager for atomic state persistence
-	stateManager := state.NewManager(workspace)
+	wctx.sessions = session.NewSessionManager(filepath.Join(workspace, "sessions"))
+	wctx.state = state.NewManager(workspace)
 
 	// Create MCP manager and start servers
-	mcpManager := mcp.NewMCPManager(cfg.MCP, workspace)
+	mcpMgr := mcp.NewMCPManager(al.config.MCP, workspace)
 	ctx := context.Background()
-	if err := mcpManager.StartAll(ctx, cfg.MCP); err != nil {
+	if err := mcpMgr.StartAll(ctx, al.config.MCP); err != nil {
 		logger.ErrorCF("mcp", "Failed to start MCP servers",
-			map[string]interface{}{"error": err.Error()})
+			map[string]interface{}{"error": err.Error(), "workspace": workspace})
 	}
 
-	// Register MCP tools in the main agent's registry
-	if mcpManager.Count() > 0 {
-		allTools := mcpManager.GetAllTools(ctx)
+	// Register MCP tools in the workspace agent's registry
+	if mcpMgr.Count() > 0 {
+		allTools := mcpMgr.GetAllTools(ctx)
 		totalTools := 0
 		for serverName, serverTools := range allTools {
 			for _, toolDef := range serverTools {
-				client := mcpManager.GetClient(serverName)
+				client := mcpMgr.GetClient(serverName)
 				if client != nil {
 					adapter := tools.NewMCPToolAdapter(
 						serverName,
@@ -214,95 +371,110 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 				}
 			}
 		}
-		logger.InfoCF("mcp", "Registered MCP tools in main agent",
+		logger.InfoCF("mcp", "Registered MCP tools in workspace",
 			map[string]interface{}{
-				"servers": mcpManager.Count(),
-				"tools":   totalTools,
+				"workspace": workspace,
+				"servers":   mcpMgr.Count(),
+				"tools":     totalTools,
 			})
 	}
 
 	// Create context builder and set tools registry
-	contextBuilder := NewContextBuilder(workspace, cfg.Agents.Defaults.Name)
-	contextBuilder.SetToolsRegistry(toolsRegistry)
-	contextBuilder.SetMCPManager(mcpManager)
+	wctx.contextBuilder = NewContextBuilder(workspace, al.config.Agents.Defaults.Name)
+	wctx.contextBuilder.SetToolsRegistry(toolsRegistry)
+	wctx.contextBuilder.SetMCPManager(mcpMgr)
 
-	al := &AgentLoop{
-		bus:            msgBus,
-		provider:       provider,
-		workspace:      workspace,
-		model:          cfg.Agents.Defaults.Model,
-		contextWindow:  cfg.Agents.Defaults.MaxTokens, // Restore context window for summarization
-		maxIterations:  cfg.Agents.Defaults.MaxToolIterations,
-		timeout:        time.Duration(cfg.Agents.Defaults.Timeout) * time.Second,
-		sessions:       sessionsManager,
-		state:          stateManager,
-		contextBuilder: contextBuilder,
-		tools:          toolsRegistry,
-		mcpManager:     mcpManager,
-		summarizing:    sync.Map{},
-	}
+	wctx.tools = toolsRegistry
 
-	// Register session control tool
-	toolsRegistry.Register(tools.NewSessionControlTool(al))
-
-	return al
+	// Register session control tool with workspace context wrapper
+	toolsRegistry.Register(tools.NewSessionControlTool(&workspaceSessionController{al: al, wctx: wctx}))
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
 	for al.running.Load() {
+		msg, ok := al.bus.ConsumeInbound(ctx)
+		if !ok {
+			// Check if we're stopping
+			if !al.running.Load() || ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+
+		// Acquire semaphore to limit concurrency
 		select {
+		case al.sem <- struct{}{}:
+			al.wg.Add(1)
+			go func(m bus.InboundMessage) {
+				defer func() {
+					<-al.sem
+					al.wg.Done()
+				}()
+				al.handleInboundMessage(ctx, m)
+			}(msg)
 		case <-ctx.Done():
 			return nil
-		default:
-			msg, ok := al.bus.ConsumeInbound(ctx)
-			if !ok {
-				continue
-			}
-
-			// 2. Update tool contexts (resets sentInRound flag)
-			al.updateToolContexts(msg.Channel, msg.ChatID)
-
-			response, err := al.processMessage(ctx, msg)
-			if err != nil {
-				response = fmt.Sprintf("Error processing message: %v", err)
-			}
-
-			if response != "" {
-				// Check if the message tool already sent a response during this round.
-				// If so, skip publishing to avoid duplicate messages to the user.
-				alreadySent := false
-				if tool, ok := al.tools.Get("message"); ok {
-					if mt, ok := tool.(*tools.MessageTool); ok {
-						alreadySent = mt.HasSentInRound()
-					}
-				}
-
-				if !alreadySent {
-					al.bus.PublishOutbound(bus.OutboundMessage{
-						Channel: msg.Channel,
-						ChatID:  msg.ChatID,
-						Content: response,
-					})
-				}
-			}
 		}
 	}
 
 	return nil
 }
 
+func (al *AgentLoop) handleInboundMessage(ctx context.Context, msg bus.InboundMessage) {
+	// 2. Update tool contexts (resets sentInRound flag)
+	wctx := al.getOrCreateWorkspaceContext(msg.SenderID)
+	al.updateToolContexts(wctx.tools, msg.Channel, msg.ChatID)
+
+	response, err := al.processMessage(ctx, msg)
+	if err != nil {
+		response = fmt.Sprintf("Error processing message: %v", err)
+	}
+
+	if response != "" {
+		// Check if the message tool already sent a response during this round.
+		// If so, skip publishing to avoid duplicate messages to the user.
+		alreadySent := false
+		if tool, ok := wctx.tools.Get("message"); ok {
+			if mt, ok := tool.(*tools.MessageTool); ok {
+				alreadySent = mt.HasSentInRound()
+			}
+		}
+
+		if !alreadySent {
+			al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+				Channel: msg.Channel,
+				ChatID:  msg.ChatID,
+				Content: response,
+			})
+		}
+	}
+}
+
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
-	// Clean up MCP clients
-	if al.mcpManager != nil {
-		al.mcpManager.StopAll()
+
+	// Wait for all active message processing to complete
+	al.wg.Wait()
+
+	// Clean up all MCP clients in all workspaces
+	al.wsMu.RLock()
+	defer al.wsMu.RUnlock()
+
+	for _, wctx := range al.workspaces {
+		wctx.mu.Lock()
+		if wctx.contextBuilder != nil && wctx.contextBuilder.mcpManager != nil {
+			wctx.contextBuilder.mcpManager.StopAll()
+		}
+		wctx.mu.Unlock()
 	}
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
-	al.tools.Register(tool)
+	// Register to default workspace context by default
+	wctx := al.getOrCreateWorkspaceContext("")
+	wctx.tools.Register(tool)
 }
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
@@ -311,14 +483,14 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 
 // RecordLastChannel records the last active channel for this workspace.
 // This uses the atomic state save mechanism to prevent data loss on crash.
-func (al *AgentLoop) RecordLastChannel(channel string) error {
-	return al.state.SetLastChannel(channel)
+func (al *AgentLoop) RecordLastChannel(wctx *workspaceContext, channel string) error {
+	return wctx.state.SetLastChannel(channel)
 }
 
 // RecordLastChatID records the last active chat ID for this workspace.
 // This uses the atomic state save mechanism to prevent data loss on crash.
-func (al *AgentLoop) RecordLastChatID(chatID string) error {
-	return al.state.SetLastChatID(chatID)
+func (al *AgentLoop) RecordLastChatID(wctx *workspaceContext, chatID string) error {
+	return wctx.state.SetLastChatID(chatID)
 }
 
 func (al *AgentLoop) ProcessDirect(ctx context.Context, content, sessionKey string) (string, error) {
@@ -337,19 +509,25 @@ func (al *AgentLoop) ProcessDirectWithChannel(ctx context.Context, content, sess
 	return al.processMessage(ctx, msg)
 }
 
-// ProcessHeartbeat processes a heartbeat request without session history.
-// Each heartbeat is independent and doesn't accumulate context.
 func (al *AgentLoop) ProcessHeartbeat(ctx context.Context, content, channel, chatID string) (string, error) {
+	// Heartbeat always uses default workspace if called this way
+	return al.ProcessHeartbeatForWorkspace(ctx, content, channel, chatID, al.defaultWS)
+}
+
+// ProcessHeartbeatForWorkspace processes a heartbeat request for a specific workspace.
+func (al *AgentLoop) ProcessHeartbeatForWorkspace(ctx context.Context, content, channel, chatID, workspacePath string) (string, error) {
+	wctx := al.getOrCreateWorkspaceContextByPath(workspacePath)
+
 	return al.runAgentLoop(ctx, processOptions{
 		SessionKey:      "heartbeat",
 		Channel:         channel,
 		ChatID:          chatID,
 		UserMessage:     content,
-		DefaultResponse: "I've completed processing but have no response to give.",
+		DefaultResponse: "HEARTBEAT_OK",
 		EnableSummary:   false,
 		SendResponse:    false,
 		NoHistory:       true, // Don't load session history for heartbeat
-	})
+	}, wctx)
 }
 
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
@@ -382,7 +560,8 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			archiveName = strings.Join(parts[1:], "_")
 		}
 
-		newKey, archivedKey, err := al.RotateSession(ctx, msg.SessionKey, archiveName)
+		wctx := al.getOrCreateWorkspaceContext(msg.SenderID)
+		newKey, archivedKey, err := al.RotateSession(ctx, msg.SessionKey, archiveName, wctx)
 		if err != nil {
 			return fmt.Sprintf("Error starting new session: %v", err), nil
 		}
@@ -395,9 +574,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return response, nil
 	}
 
+	wctx := al.getOrCreateWorkspaceContext(msg.SenderID)
+
 	// Resolve active session key (if any)
 	// This ensures we continue writing to the active session file instead of the base key
-	activeSession := al.state.GetActiveSession(msg.SessionKey)
+	activeSession := wctx.state.GetActiveSession(msg.SessionKey)
 	effectiveSessionKey := msg.SessionKey
 	if activeSession != "" {
 		effectiveSessionKey = activeSession
@@ -412,7 +593,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: "I've completed processing but have no response to give.",
 		EnableSummary:   true,
 		SendResponse:    false,
-	})
+	}, wctx)
 }
 
 func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []providers.Message) (string, error) {
@@ -427,7 +608,7 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	msgs := []providers.Message{
 		{Role: "system", Content: prompt},
 	}
-	
+
 	// Limit history.
 	start := 0
 	if len(history) > 20 {
@@ -445,7 +626,7 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 	}
 
 	summary := strings.TrimSpace(resp.Content)
-	
+
 	// Basic sanitization
 	summary = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
@@ -474,11 +655,11 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 
 // RotateSession archives the current session and starts a new one.
 // Returns the new session key, the archived session key, and any error.
-func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName string) (string, string, error) {
-	logger.InfoCF("agent", "RotateSession starting", map[string]interface{}{"baseKey": baseKey, "archiveName": archiveName})
+func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName string, wctx *workspaceContext) (string, string, error) {
+	logger.InfoCF("agent", "RotateSession starting", map[string]interface{}{"baseKey": baseKey, "archiveName": archiveName, "workspace": wctx.path})
 
 	// 1. Identify the current active session key (old key)
-	oldKey := al.state.GetActiveSession(baseKey)
+	oldKey := wctx.state.GetActiveSession(baseKey)
 	if oldKey == "" {
 		oldKey = baseKey // Fallback if no active session tracking yet
 	}
@@ -487,7 +668,7 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 	// 2. Auto-generate name if none provided
 	if archiveName == "" {
 		// Get history to generate summary
-		history := al.sessions.GetHistory(oldKey)
+		history := wctx.sessions.GetHistory(oldKey)
 		logger.InfoCF("agent", "RotateSession: history length", map[string]interface{}{"len": len(history)})
 		if len(history) > 0 {
 			logger.InfoCF("agent", "Generating session summary for archive", map[string]interface{}{"key": oldKey})
@@ -509,7 +690,7 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 	// 3. Rename the OLD session file
 	newArchiveKey := fmt.Sprintf("%s_%s", oldKey, archiveName)
 	logger.InfoCF("agent", "RotateSession: renaming", map[string]interface{}{"old": oldKey, "new": newArchiveKey})
-	if err := al.sessions.RenameSession(oldKey, newArchiveKey); err != nil {
+	if err := wctx.sessions.RenameSession(oldKey, newArchiveKey); err != nil {
 		logger.WarnCF("agent", "Failed to rename archived session", map[string]interface{}{
 			"error": err.Error(),
 			"old":   oldKey,
@@ -520,7 +701,7 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 	}
 
 	// 4. Start NEW session
-	newKey, err := al.state.StartNewSession(baseKey, "")
+	newKey, err := wctx.state.StartNewSession(baseKey, "")
 	if err != nil {
 		logger.ErrorCF("agent", "Failed to start new session", map[string]interface{}{
 			"error":       err.Error(),
@@ -529,11 +710,11 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 		return "", "", err
 	}
 
-	logger.InfoCF("agent", "RotateSession: completed", map[string]interface{}{
-		"archive_key": newArchiveKey,
-		"new_key":     newKey,
-	})
+	// BUG-2 FIX: Clean up the lock for the old session key to prevent memory leak
+	// The lock map grows indefinitely otherwise.
+	al.sessionLocks.Delete(oldKey)
 
+	logger.InfoCF("agent", "RotateSession: completed", map[string]interface{}{"newKey": newKey, "archived": newArchiveKey})
 	return newKey, newArchiveKey, nil
 }
 
@@ -548,6 +729,9 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 			"sender_id": msg.SenderID,
 			"chat_id":   msg.ChatID,
 		})
+
+	// Resolve workspace for this system message
+	wctx := al.getOrCreateWorkspaceContext(msg.SenderID)
 
 	// Parse origin channel from chat_id (format: "channel:chat_id")
 	var originChannel string
@@ -583,37 +767,47 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 			"sender_id":   msg.SenderID,
 			"channel":     originChannel,
 			"content_len": len(content),
+			"workspace":   wctx.path,
 		})
 
 	// Agent only logs, does not respond to user
 	return "", nil
 }
 
-// runAgentLoop is the core message processing logic.
-// It handles context building, LLM calls, tool execution, and response handling.
-func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (string, error) {
+// getSessionLock returns (or creates) a mutex for a specific session
+func (al *AgentLoop) getSessionLock(sessionKey string) *sync.Mutex {
+	mu, _ := al.sessionLocks.LoadOrStore(sessionKey, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx *workspaceContext) (string, error) {
+	// 0. Acquire session lock to prevent concurrent processing of the same session
+	mu := al.getSessionLock(opts.SessionKey)
+	mu.Lock()
+	defer mu.Unlock()
+
 	// 0. Record last channel for heartbeat notifications (skip internal channels)
 	if opts.Channel != "" && opts.ChatID != "" {
 		// Don't record internal channels (cli, system, subagent)
 		if !constants.IsInternalChannel(opts.Channel) {
 			channelKey := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
-			if err := al.RecordLastChannel(channelKey); err != nil {
+			if err := al.RecordLastChannel(wctx, channelKey); err != nil {
 				logger.WarnCF("agent", "Failed to record last channel: %v", map[string]interface{}{"error": err.Error()})
 			}
 		}
 	}
 
 	// 1. Update tool contexts
-	al.updateToolContexts(opts.Channel, opts.ChatID)
+	al.updateToolContexts(wctx.tools, opts.Channel, opts.ChatID)
 
 	// 2. Build messages (skip history for heartbeat)
 	var history []providers.Message
 	var summary string
 	if !opts.NoHistory {
-		history = al.sessions.GetHistory(opts.SessionKey)
-		summary = al.sessions.GetSummary(opts.SessionKey)
+		history = wctx.sessions.GetHistory(opts.SessionKey)
+		summary = wctx.sessions.GetSummary(opts.SessionKey)
 	}
-	messages := al.contextBuilder.BuildMessages(
+	messages := wctx.contextBuilder.BuildMessages(
 		history,
 		summary,
 		opts.UserMessage,
@@ -623,15 +817,15 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	)
 
 	// 3. Save user message to session
-	al.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
+	wctx.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts)
+	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts, wctx)
 	if err != nil {
 		// Even if iteration fails, we should record an assistant response to maintain role balance
 		errContent := fmt.Sprintf("Error processing message: %v", err)
-		al.sessions.AddMessage(opts.SessionKey, "assistant", errContent)
-		al.sessions.Save(opts.SessionKey)
+		wctx.sessions.AddMessage(opts.SessionKey, "assistant", errContent)
+		wctx.sessions.Save(opts.SessionKey)
 		return "", err
 	}
 
@@ -644,17 +838,17 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	}
 
 	// 6. Save final assistant message to session
-	al.sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
-	al.sessions.Save(opts.SessionKey)
+	wctx.sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	wctx.sessions.Save(opts.SessionKey)
 
 	// 7. Optional: summarization
 	if opts.EnableSummary {
-		al.maybeSummarize(opts.SessionKey, opts.Channel, opts.ChatID)
+		al.maybeSummarize(wctx, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
 	// 8. Optional: send response via bus
 	if opts.SendResponse {
-		al.bus.PublishOutbound(bus.OutboundMessage{
+		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
 			Content: finalContent,
@@ -674,16 +868,63 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 }
 
 func (al *AgentLoop) GetSessionManager() *session.SessionManager {
-	return al.sessions
+	// For backward compatibility and testing, returns default workspace sessions
+	wctx := al.getOrCreateWorkspaceContext("")
+	return wctx.sessions
+}
+
+func (al *AgentLoop) GetStateManager() *state.Manager {
+	// For backward compatibility and testing, returns default workspace state
+	wctx := al.getOrCreateWorkspaceContext("")
+	return wctx.state
 }
 
 func (al *AgentLoop) GetActiveSession(baseKey string) string {
-	return al.state.GetActiveSession(baseKey)
+	// For backward compatibility and testing, returns default workspace active session
+	wctx := al.getOrCreateWorkspaceContext("")
+	return wctx.state.GetActiveSession(baseKey)
+}
+
+func (al *AgentLoop) startTypingLoop(ctx context.Context, channel, chatID string) {
+	defer al.wg.Done()
+	// Don't send typing indicator for internal channels
+	if constants.IsInternalChannel(channel) {
+		return
+	}
+
+	ticker := time.NewTicker(8 * time.Second)
+	defer ticker.Stop()
+
+	// Send initial typing indicator
+	al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		Channel: channel,
+		ChatID:  chatID,
+		Type:    bus.MessageTypeTyping,
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+				Channel: channel,
+				ChatID:  chatID,
+				Type:    bus.MessageTypeTyping,
+			})
+		}
+	}
 }
 
 // runLLMIteration executes the LLM call loop with tool handling.
 // Returns the final content, iteration count, and any error.
-func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.Message, opts processOptions) (string, int, error) {
+func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.Message, opts processOptions, wctx *workspaceContext) (string, int, error) {
+	// Start typing indicator loop
+	typingCtx, cancelTyping := context.WithCancel(ctx)
+	defer cancelTyping()
+	al.wg.Add(1)
+	go al.startTypingLoop(typingCtx, opts.Channel, opts.ChatID)
+
 	iteration := 0
 	var finalContent string
 
@@ -697,7 +938,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			})
 
 		// Build tool definitions
-		providerToolDefs := al.tools.ToProviderDefs()
+		providerToolDefs := wctx.tools.ToProviderDefs()
 
 		// Log LLM request details
 		logger.DebugCF("agent", "LLM request",
@@ -749,94 +990,45 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 				// Notify user on first retry only
 				if retry == 0 && !constants.IsInternalChannel(opts.Channel) && opts.SendResponse {
-					al.bus.PublishOutbound(bus.OutboundMessage{
+					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
 						Content: "⚠️ Context window exceeded. Compressing history and retrying...",
 					})
 				}
 
-				// Force compression
-				al.forceCompression(opts.SessionKey)
+				// COMPRESSION LOGIC REFACTOR:
+				// To avoid fragile state reloading, we perform a local compression on history
+				// and rebuild the messages list for the retry.
+				history := wctx.sessions.GetHistory(opts.SessionKey)
+				if len(history) > 4 {
+					// Perform emergency compression on the history slice (dropped oldest 50%)
+					conversation := history[1 : len(history)-1]
+					mid := len(conversation) / 2
+					newHist := make([]providers.Message, 0, len(history))
+					newHist = append(newHist, history[0]) // System
+					newHist = append(newHist, providers.Message{
+						Role:    "system",
+						Content: fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", mid),
+					})
+					newHist = append(newHist, conversation[mid:]...)
+					newHist = append(newHist, history[len(history)-1]) // Last message
 
-				// Rebuild messages with compressed history
-				// Note: We need to reload history from session manager because forceCompression changed it
-				newHistory := al.sessions.GetHistory(opts.SessionKey)
-				newSummary := al.sessions.GetSummary(opts.SessionKey)
+					// Update session manager so future iterations/rounds don't hit the same limit
+					wctx.sessions.SetHistory(opts.SessionKey, newHist)
+					wctx.sessions.Save(opts.SessionKey)
 
-				// Re-create messages for the next attempt
-				// We keep the current user message (opts.UserMessage) effectively
-				messages = al.contextBuilder.BuildMessages(
-					newHistory,
-					newSummary,
-					opts.UserMessage,
-					nil,
-					opts.Channel,
-					opts.ChatID,
-				)
-
-				// Important: If we are in the middle of a tool loop (iteration > 1),
-				// rebuilding messages from session history might duplicate the flow or miss context
-				// if intermediate steps weren't saved correctly.
-				// However, al.sessions.AddFullMessage is called after every tool execution,
-				// so GetHistory should reflect the current state including partial tool execution.
-				// But we need to ensure we don't duplicate the user message which is appended in BuildMessages.
-				// BuildMessages(history...) takes the stored history and appends the *current* user message.
-				// If iteration > 1, the "current user message" was already added to history in step 3 of runAgentLoop.
-				// So if we pass opts.UserMessage again, we might duplicate it?
-				// Actually, step 3 is: al.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
-				// So GetHistory ALREADY contains the user message!
-
-				// CORRECTION:
-				// BuildMessages combines: [System] + [History] + [CurrentMessage]
-				// But Step 3 added CurrentMessage to History.
-				// So if we use GetHistory now, it has the user message.
-				// If we pass opts.UserMessage to BuildMessages, it adds it AGAIN.
-
-				// For retry in the middle of a loop, we should rely on what's in the session.
-				// BUT checking BuildMessages implementation:
-				// It appends history... then appends currentMessage.
-
-				// Logic fix for retry:
-				// If iteration == 1, opts.UserMessage corresponds to the user input.
-				// If iteration > 1, we are processing tool results. The "messages" passed to Chat
-				// already accumulated tool outputs.
-				// Rebuilding from session history is safest because it persists state.
-				// Start fresh with rebuilt history.
-
-				// Special case: standard BuildMessages appends "currentMessage".
-				// If we are strictly retrying the *LLM call*, we want the exact same state as before but compressed.
-				// However, the "messages" argument passed to runLLMIteration is constructed by the caller.
-				// If we rebuild from Session, we need to know if "currentMessage" should be appended or is already in history.
-
-				// In runAgentLoop:
-				// 3. sessions.AddMessage(userMsg)
-				// 4. runLLMIteration(..., UserMessage)
-
-				// So History contains the user message.
-				// BuildMessages typically appends the user message as a *new* pending message.
-				// Wait, standard BuildMessages usage in runAgentLoop:
-				// messages := BuildMessages(history (has old), UserMessage)
-				// THEN AddMessage(UserMessage).
-				// So "history" passed to BuildMessages does NOT contain the current UserMessage yet.
-
-				// But here, inside the loop, we have already saved it.
-				// So GetHistory() includes the current user message.
-				// If we call BuildMessages(GetHistory(), UserMessage), we get duplicates.
-
-				// Hack/Fix:
-				// If we are retrying, we rebuild from Session History ONLY.
-				// We pass empty string as "currentMessage" to BuildMessages
-				// because the "current message" is already saved in history (step 3).
-
-				messages = al.contextBuilder.BuildMessages(
-					newHistory,
-					newSummary,
-					"", // Empty because history already contains the relevant messages
-					nil,
-					opts.Channel,
-					opts.ChatID,
-				)
+					// Rebuild messages for CURRENT iteration retry
+					newSummary := wctx.sessions.GetSummary(opts.SessionKey)
+					messages = wctx.contextBuilder.BuildMessages(
+						newHist,
+						newSummary,
+						"", // History already has the user message if iteration > 1 (or we just added it)
+						nil,
+						opts.Channel,
+						opts.ChatID,
+					)
+				}
 
 				continue
 			}
@@ -896,7 +1088,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		messages = append(messages, assistantMsg)
 
 		// Save assistant message with tool calls to session
-		al.sessions.AddFullMessage(opts.SessionKey, assistantMsg)
+		wctx.sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
 		// Execute tool calls
 		for _, tc := range response.ToolCalls {
@@ -925,11 +1117,11 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				}
 			}
 
-			toolResult := al.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
+			toolResult := wctx.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
 
 			// Send ForUser content to user immediately if not Silent
 			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
-				al.bus.PublishOutbound(bus.OutboundMessage{
+				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
 					Content: toolResult.ForUser,
@@ -955,7 +1147,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			messages = append(messages, toolResultMsg)
 
 			// Save tool result message to session
-			al.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+			wctx.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 		}
 	}
 
@@ -963,19 +1155,23 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 }
 
 // updateToolContexts updates the context for tools that need channel/chatID info.
-func (al *AgentLoop) updateToolContexts(channel, chatID string) {
+func (al *AgentLoop) updateToolContexts(registry *tools.ToolRegistry, channel, chatID string) {
+	if registry == nil {
+		return
+	}
+
 	// Use ContextualTool interface instead of type assertions
-	if tool, ok := al.tools.Get("message"); ok {
+	if tool, ok := registry.Get("message"); ok {
 		if mt, ok := tool.(tools.ContextualTool); ok {
 			mt.SetContext(channel, chatID)
 		}
 	}
-	if tool, ok := al.tools.Get("spawn"); ok {
+	if tool, ok := registry.Get("spawn"); ok {
 		if st, ok := tool.(tools.ContextualTool); ok {
 			st.SetContext(channel, chatID)
 		}
 	}
-	if tool, ok := al.tools.Get("subagent"); ok {
+	if tool, ok := registry.Get("subagent"); ok {
 		if st, ok := tool.(tools.ContextualTool); ok {
 			st.SetContext(channel, chatID)
 		}
@@ -983,24 +1179,38 @@ func (al *AgentLoop) updateToolContexts(channel, chatID string) {
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
-func (al *AgentLoop) maybeSummarize(sessionKey, channel, chatID string) {
-	newHistory := al.sessions.GetHistory(sessionKey)
+func (al *AgentLoop) maybeSummarize(wctx *workspaceContext, sessionKey, channel, chatID string) {
+	newHistory := wctx.sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
 	threshold := al.contextWindow * 75 / 100
 
-	if len(newHistory) > 20 || tokenEstimate > threshold {
+	if tokenEstimate > threshold {
 		if _, loading := al.summarizing.LoadOrStore(sessionKey, true); !loading {
+			al.wg.Add(1)
 			go func() {
+				defer al.wg.Done()
 				defer al.summarizing.Delete(sessionKey)
+
+				// Acquire summarization semaphore
+				select {
+				case al.summarizationSem <- struct{}{}:
+					defer func() { <-al.summarizationSem }()
+				case <-time.After(10 * time.Second):
+					logger.WarnCF("agent", "Timed out waiting for summarization semaphore", map[string]interface{}{
+						"session_key": sessionKey,
+					})
+					return
+				}
+
 				// Notify user about optimization if not an internal channel
 				if !constants.IsInternalChannel(channel) {
-					al.bus.PublishOutbound(bus.OutboundMessage{
+					al.bus.PublishOutbound(context.Background(), bus.OutboundMessage{
 						Channel: channel,
 						ChatID:  chatID,
 						Content: "⚠️ Memory threshold reached. Optimizing conversation history...",
 					})
 				}
-				al.summarizeSession(sessionKey)
+				al.summarizeSession(wctx, sessionKey)
 			}()
 		}
 	}
@@ -1008,8 +1218,8 @@ func (al *AgentLoop) maybeSummarize(sessionKey, channel, chatID string) {
 
 // forceCompression aggressively reduces context when the limit is hit.
 // It drops the oldest 50% of messages (keeping system prompt and last user message).
-func (al *AgentLoop) forceCompression(sessionKey string) {
-	history := al.sessions.GetHistory(sessionKey)
+func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext) {
+	history := wctx.sessions.GetHistory(sessionKey)
 	if len(history) <= 4 {
 		return
 	}
@@ -1056,8 +1266,8 @@ func (al *AgentLoop) forceCompression(sessionKey string) {
 	newHistory = append(newHistory, history[len(history)-1]) // Last message
 
 	// Update session
-	al.sessions.SetHistory(sessionKey, newHistory)
-	al.sessions.Save(sessionKey)
+	wctx.sessions.SetHistory(sessionKey, newHistory)
+	wctx.sessions.Save(sessionKey)
 
 	logger.WarnCF("agent", "Forced compression executed", map[string]interface{}{
 		"session_key":  sessionKey,
@@ -1066,19 +1276,20 @@ func (al *AgentLoop) forceCompression(sessionKey string) {
 	})
 }
 
-// GetStartupInfo returns information about loaded tools and skills for logging.
+// GetStartupInfo returns information about loaded tools and skills for the default workspace.
 func (al *AgentLoop) GetStartupInfo() map[string]interface{} {
 	info := make(map[string]interface{})
+	wctx := al.getOrCreateWorkspaceContext("")
 
 	// Tools info
-	tools := al.tools.List()
+	tools := wctx.tools.List()
 	info["tools"] = map[string]interface{}{
 		"count": len(tools),
 		"names": tools,
 	}
 
 	// Skills info
-	info["skills"] = al.contextBuilder.GetSkillsInfo()
+	info["skills"] = wctx.contextBuilder.GetSkillsInfo()
 
 	return info
 }
@@ -1135,7 +1346,7 @@ func formatToolsForLog(tools []providers.ToolDefinition) string {
 }
 
 // summarizeSession summarizes the conversation history for a session.
-func (al *AgentLoop) summarizeSession(sessionKey string) {
+func (al *AgentLoop) summarizeSession(wctx *workspaceContext, sessionKey string) {
 	timeout := al.timeout
 	if timeout == 0 {
 		timeout = 120 * time.Second
@@ -1143,8 +1354,8 @@ func (al *AgentLoop) summarizeSession(sessionKey string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	history := al.sessions.GetHistory(sessionKey)
-	summary := al.sessions.GetSummary(sessionKey)
+	history := wctx.sessions.GetHistory(sessionKey)
+	summary := wctx.sessions.GetSummary(sessionKey)
 
 	// Keep last 4 messages for continuity
 	if len(history) <= 4 {
@@ -1160,9 +1371,8 @@ func (al *AgentLoop) summarizeSession(sessionKey string) {
 	omitted := false
 
 	for _, m := range toSummarize {
-		if m.Role != "user" && m.Role != "assistant" {
-			continue
-		}
+		// BUG-8 FIX: Include all message types (tool calls/results too)
+		// so DiscardFirst doesn't drop content that was never summarized.
 		// Estimate tokens for this message
 		msgTokens := len(m.Content) / 2 // Use safer estimate here too (2.5 -> 2 for integer division safety)
 		if msgTokens > maxMessageTokens {
@@ -1207,9 +1417,9 @@ func (al *AgentLoop) summarizeSession(sessionKey string) {
 	}
 
 	if finalSummary != "" {
-		al.sessions.SetSummary(sessionKey, finalSummary)
-		al.sessions.TruncateHistory(sessionKey, 4)
-		al.sessions.Save(sessionKey)
+		wctx.sessions.SetSummary(sessionKey, finalSummary)
+		wctx.sessions.DiscardFirst(sessionKey, len(toSummarize))
+		wctx.sessions.Save(sessionKey)
 	}
 }
 

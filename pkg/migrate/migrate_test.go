@@ -166,14 +166,14 @@ func TestConvertConfig(t *testing.T) {
 		if len(warnings) != 0 {
 			t.Errorf("expected no warnings, got %v", warnings)
 		}
-		if cfg.Providers.Anthropic.APIKey != "sk-ant-test" {
-			t.Errorf("Anthropic.APIKey = %q, want %q", cfg.Providers.Anthropic.APIKey, "sk-ant-test")
+		if cfg.Providers.Anthropic[""].APIKey != "sk-ant-test" {
+			t.Errorf("Anthropic.APIKey = %q, want %q", cfg.Providers.Anthropic[""].APIKey, "sk-ant-test")
 		}
-		if cfg.Providers.OpenRouter.APIKey != "sk-or-test" {
-			t.Errorf("OpenRouter.APIKey = %q, want %q", cfg.Providers.OpenRouter.APIKey, "sk-or-test")
+		if cfg.Providers.OpenRouter[""].APIKey != "sk-or-test" {
+			t.Errorf("OpenRouter.APIKey = %q, want %q", cfg.Providers.OpenRouter[""].APIKey, "sk-or-test")
 		}
-		if cfg.Providers.Groq.APIKey != "gsk-test" {
-			t.Errorf("Groq.APIKey = %q, want %q", cfg.Providers.Groq.APIKey, "gsk-test")
+		if cfg.Providers.Groq[""].APIKey != "gsk-test" {
+			t.Errorf("Groq.APIKey = %q, want %q", cfg.Providers.Groq[""].APIKey, "gsk-test")
 		}
 	})
 
@@ -272,11 +272,11 @@ func TestConvertConfig(t *testing.T) {
 		if cfg.Agents.Defaults.Model != "claude-3-opus" {
 			t.Errorf("Model = %q, want %q", cfg.Agents.Defaults.Model, "claude-3-opus")
 		}
-		if cfg.Agents.Defaults.MaxTokens != 4096 {
-			t.Errorf("MaxTokens = %d, want %d", cfg.Agents.Defaults.MaxTokens, 4096)
+		if *cfg.Agents.Defaults.MaxTokens != 4096 {
+			t.Errorf("MaxTokens = %d, want %d", *cfg.Agents.Defaults.MaxTokens, 4096)
 		}
-		if cfg.Agents.Defaults.Temperature != 0.5 {
-			t.Errorf("Temperature = %f, want %f", cfg.Agents.Defaults.Temperature, 0.5)
+		if *cfg.Agents.Defaults.Temperature != 0.5 {
+			t.Errorf("Temperature = %f, want %f", *cfg.Agents.Defaults.Temperature, 0.5)
 		}
 		if cfg.Agents.Defaults.Workspace != "~/.picoclaw/workspace" {
 			t.Errorf("Workspace = %q, want %q", cfg.Agents.Defaults.Workspace, "~/.picoclaw/workspace")
@@ -303,32 +303,32 @@ func TestMergeConfig(t *testing.T) {
 	t.Run("fills empty fields", func(t *testing.T) {
 		existing := config.DefaultConfig()
 		incoming := config.DefaultConfig()
-		incoming.Providers.Anthropic.APIKey = "sk-ant-incoming"
-		incoming.Providers.OpenRouter.APIKey = "sk-or-incoming"
+		incoming.Providers.Anthropic[""] = config.ProviderConfig{APIKey: "sk-ant-incoming"}
+		incoming.Providers.OpenRouter[""] = config.ProviderConfig{APIKey: "sk-or-incoming"}
 
 		result := MergeConfig(existing, incoming)
-		if result.Providers.Anthropic.APIKey != "sk-ant-incoming" {
-			t.Errorf("Anthropic.APIKey = %q, want %q", result.Providers.Anthropic.APIKey, "sk-ant-incoming")
+		if result.Providers.Anthropic[""].APIKey != "sk-ant-incoming" {
+			t.Errorf("Anthropic.APIKey = %q, want %q", result.Providers.Anthropic[""].APIKey, "sk-ant-incoming")
 		}
-		if result.Providers.OpenRouter.APIKey != "sk-or-incoming" {
-			t.Errorf("OpenRouter.APIKey = %q, want %q", result.Providers.OpenRouter.APIKey, "sk-or-incoming")
+		if result.Providers.OpenRouter[""].APIKey != "sk-or-incoming" {
+			t.Errorf("OpenRouter.APIKey = %q, want %q", result.Providers.OpenRouter[""].APIKey, "sk-or-incoming")
 		}
 	})
 
 	t.Run("preserves existing non-empty fields", func(t *testing.T) {
 		existing := config.DefaultConfig()
-		existing.Providers.Anthropic.APIKey = "sk-ant-existing"
+		existing.Providers.Anthropic[""] = config.ProviderConfig{APIKey: "sk-ant-existing"}
 
 		incoming := config.DefaultConfig()
-		incoming.Providers.Anthropic.APIKey = "sk-ant-incoming"
-		incoming.Providers.OpenAI.APIKey = "sk-oai-incoming"
+		incoming.Providers.Anthropic[""] = config.ProviderConfig{APIKey: "sk-ant-incoming"}
+		incoming.Providers.OpenAI[""] = config.ProviderConfig{APIKey: "sk-oai-incoming"}
 
 		result := MergeConfig(existing, incoming)
-		if result.Providers.Anthropic.APIKey != "sk-ant-existing" {
-			t.Errorf("Anthropic.APIKey should be preserved, got %q", result.Providers.Anthropic.APIKey)
+		if result.Providers.Anthropic[""].APIKey != "sk-ant-existing" {
+			t.Errorf("Anthropic.APIKey should be preserved, got %q", result.Providers.Anthropic[""].APIKey)
 		}
-		if result.Providers.OpenAI.APIKey != "sk-oai-incoming" {
-			t.Errorf("OpenAI.APIKey should be filled, got %q", result.Providers.OpenAI.APIKey)
+		if result.Providers.OpenAI[""].APIKey != "sk-oai-incoming" {
+			t.Errorf("OpenAI.APIKey should be filled, got %q", result.Providers.OpenAI[""].APIKey)
 		}
 	})
 
@@ -682,11 +682,11 @@ func TestRunFullMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading PicoClaw config: %v", err)
 	}
-	if picoConfig.Providers.Anthropic.APIKey != "sk-ant-migrate-test" {
-		t.Errorf("Anthropic.APIKey = %q, want %q", picoConfig.Providers.Anthropic.APIKey, "sk-ant-migrate-test")
+	if picoConfig.Providers.Anthropic[""].APIKey != "sk-ant-migrate-test" {
+		t.Errorf("Anthropic.APIKey = %q, want %q", picoConfig.Providers.Anthropic[""].APIKey, "sk-ant-migrate-test")
 	}
-	if picoConfig.Providers.OpenRouter.APIKey != "sk-or-migrate-test" {
-		t.Errorf("OpenRouter.APIKey = %q, want %q", picoConfig.Providers.OpenRouter.APIKey, "sk-or-migrate-test")
+	if picoConfig.Providers.OpenRouter[""].APIKey != "sk-or-migrate-test" {
+		t.Errorf("OpenRouter.APIKey = %q, want %q", picoConfig.Providers.OpenRouter[""].APIKey, "sk-or-migrate-test")
 	}
 	if !picoConfig.Channels.Telegram.Enabled {
 		t.Error("Telegram should be enabled")

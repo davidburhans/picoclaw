@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 type SendCallback func(channel, chatID, content string) error
@@ -12,6 +13,7 @@ type MessageTool struct {
 	defaultChannel string
 	defaultChatID  string
 	sentInRound    bool // Tracks whether a message was sent in the current processing round
+	mu             sync.RWMutex
 }
 
 func NewMessageTool() *MessageTool {
@@ -48,6 +50,8 @@ func (t *MessageTool) Parameters() map[string]interface{} {
 }
 
 func (t *MessageTool) SetContext(channel, chatID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.defaultChannel = channel
 	t.defaultChatID = chatID
 	t.sentInRound = false // Reset send tracking for new processing round
@@ -55,6 +59,8 @@ func (t *MessageTool) SetContext(channel, chatID string) {
 
 // HasSentInRound returns true if the message tool sent a message during the current round.
 func (t *MessageTool) HasSentInRound() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.sentInRound
 }
 
@@ -71,11 +77,16 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]interface{}) 
 	channel, _ := args["channel"].(string)
 	chatID, _ := args["chat_id"].(string)
 
+	t.mu.RLock()
+	defaultChannel := t.defaultChannel
+	defaultChatID := t.defaultChatID
+	t.mu.RUnlock()
+
 	if channel == "" {
-		channel = t.defaultChannel
+		channel = defaultChannel
 	}
 	if chatID == "" {
-		chatID = t.defaultChatID
+		chatID = defaultChatID
 	}
 
 	if channel == "" || chatID == "" {
@@ -94,7 +105,10 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]interface{}) 
 		}
 	}
 
+	t.mu.Lock()
 	t.sentInRound = true
+	t.mu.Unlock()
+
 	// Silent: user already received the message directly
 	return &ToolResult{
 		ForLLM: fmt.Sprintf("Message sent to %s:%s", channel, chatID),

@@ -73,13 +73,13 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 				cfg.Agents.Defaults.Model = v
 			}
 			if v, ok := getFloat(defaults, "max_tokens"); ok {
-				cfg.Agents.Defaults.MaxTokens = int(v)
+				cfg.Agents.Defaults.MaxTokens = config.IntPtr(int(v))
 			}
 			if v, ok := getFloat(defaults, "temperature"); ok {
-				cfg.Agents.Defaults.Temperature = v
+				cfg.Agents.Defaults.Temperature = config.FloatPtr(v)
 			}
 			if v, ok := getFloat(defaults, "max_tool_iterations"); ok {
-				cfg.Agents.Defaults.MaxToolIterations = int(v)
+				cfg.Agents.Defaults.MaxToolIterations = config.IntPtr(int(v))
 			}
 			if v, ok := getString(defaults, "workspace"); ok {
 				cfg.Agents.Defaults.Workspace = rewriteWorkspacePath(v)
@@ -104,21 +104,22 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 			}
 
 			pc := config.ProviderConfig{APIKey: apiKey, APIBase: apiBase}
+			entries := config.ProviderEntries{"": pc}
 			switch name {
 			case "anthropic":
-				cfg.Providers.Anthropic = pc
+				cfg.Providers.Anthropic = entries
 			case "openai":
-				cfg.Providers.OpenAI = pc
+				cfg.Providers.OpenAI = entries
 			case "openrouter":
-				cfg.Providers.OpenRouter = pc
+				cfg.Providers.OpenRouter = entries
 			case "groq":
-				cfg.Providers.Groq = pc
+				cfg.Providers.Groq = entries
 			case "zhipu":
-				cfg.Providers.Zhipu = pc
+				cfg.Providers.Zhipu = entries
 			case "vllm":
-				cfg.Providers.VLLM = pc
+				cfg.Providers.VLLM = entries
 			case "gemini":
-				cfg.Providers.Gemini = pc
+				cfg.Providers.Gemini = entries
 			}
 		}
 	}
@@ -232,27 +233,28 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 }
 
 func MergeConfig(existing, incoming *config.Config) *config.Config {
-	if existing.Providers.Anthropic.APIKey == "" {
-		existing.Providers.Anthropic = incoming.Providers.Anthropic
+	mergeProvider := func(existing, incoming config.ProviderEntries) config.ProviderEntries {
+		if existing == nil {
+			return incoming
+		}
+		for k, v := range incoming {
+			if _, ok := existing[k]; !ok {
+				existing[k] = v
+			} else if k == "" && existing[k].APIKey == "" {
+				// Special case: if default entry is empty, overwrite it
+				existing[k] = v
+			}
+		}
+		return existing
 	}
-	if existing.Providers.OpenAI.APIKey == "" {
-		existing.Providers.OpenAI = incoming.Providers.OpenAI
-	}
-	if existing.Providers.OpenRouter.APIKey == "" {
-		existing.Providers.OpenRouter = incoming.Providers.OpenRouter
-	}
-	if existing.Providers.Groq.APIKey == "" {
-		existing.Providers.Groq = incoming.Providers.Groq
-	}
-	if existing.Providers.Zhipu.APIKey == "" {
-		existing.Providers.Zhipu = incoming.Providers.Zhipu
-	}
-	if existing.Providers.VLLM.APIKey == "" && existing.Providers.VLLM.APIBase == "" {
-		existing.Providers.VLLM = incoming.Providers.VLLM
-	}
-	if existing.Providers.Gemini.APIKey == "" {
-		existing.Providers.Gemini = incoming.Providers.Gemini
-	}
+
+	existing.Providers.Anthropic = mergeProvider(existing.Providers.Anthropic, incoming.Providers.Anthropic)
+	existing.Providers.OpenAI = mergeProvider(existing.Providers.OpenAI, incoming.Providers.OpenAI)
+	existing.Providers.OpenRouter = mergeProvider(existing.Providers.OpenRouter, incoming.Providers.OpenRouter)
+	existing.Providers.Groq = mergeProvider(existing.Providers.Groq, incoming.Providers.Groq)
+	existing.Providers.Zhipu = mergeProvider(existing.Providers.Zhipu, incoming.Providers.Zhipu)
+	existing.Providers.VLLM = mergeProvider(existing.Providers.VLLM, incoming.Providers.VLLM)
+	existing.Providers.Gemini = mergeProvider(existing.Providers.Gemini, incoming.Providers.Gemini)
 
 	if !existing.Channels.Telegram.Enabled && incoming.Channels.Telegram.Enabled {
 		existing.Channels.Telegram = incoming.Channels.Telegram

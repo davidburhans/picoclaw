@@ -55,7 +55,7 @@ func (t *MCPToolAdapter) Execute(ctx context.Context, args map[string]interface{
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("MCP tool call failed: %v", err))
 	}
-	
+
 	if result.IsError {
 		// Extract error message from content
 		var errMsg string
@@ -66,7 +66,7 @@ func (t *MCPToolAdapter) Execute(ctx context.Context, args map[string]interface{
 		}
 		return ErrorResult(fmt.Sprintf("MCP tool error: %s", errMsg))
 	}
-	
+
 	// Build response from content
 	var responseParts []string
 	for _, content := range result.Content {
@@ -74,12 +74,12 @@ func (t *MCPToolAdapter) Execute(ctx context.Context, args map[string]interface{
 			responseParts = append(responseParts, content.Text)
 		}
 	}
-	
+
 	response := strings.Join(responseParts, "\n")
 	if response == "" {
 		response = "MCP tool completed successfully (no output)"
 	}
-	
+
 	return &ToolResult{
 		ForLLM:  response,
 		ForUser: response,

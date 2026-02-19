@@ -86,6 +86,11 @@ func (cs *CronService) Start() error {
 		return nil
 	}
 
+	// Log the detected system timezone for debugging
+	now := time.Now()
+	zone, offset := now.Zone()
+	log.Printf("[cron] Service starting. System Time: %s, Timezone: %s (Offset: %ds)", now.Format(time.RFC3339), zone, offset)
+
 	if err := cs.loadStore(); err != nil {
 		return fmt.Errorf("failed to load store: %w", err)
 	}
@@ -265,6 +270,17 @@ func (cs *CronService) computeNextRun(schedule *CronSchedule, nowMS int64) *int6
 
 		// Use gronx to calculate next run time
 		now := time.UnixMilli(nowMS)
+
+		// Handle Timezone if specified
+		if schedule.TZ != "" {
+			loc, err := time.LoadLocation(schedule.TZ)
+			if err != nil {
+				log.Printf("[cron] invalid timezone '%s' for expr '%s', falling back to local: %v", schedule.TZ, schedule.Expr, err)
+			} else {
+				now = now.In(loc)
+			}
+		}
+
 		nextTime, err := gronx.NextTickAfter(schedule.Expr, now, false)
 		if err != nil {
 			log.Printf("[cron] failed to compute next run for expr '%s': %v", schedule.Expr, err)
@@ -335,12 +351,23 @@ func (cs *CronService) saveStoreUnsafe() error {
 		return err
 	}
 
+	// BUG-5 FIX: Atomic save using temp file + rename to prevent data corruption on crash
+	tempFile := cs.storePath + ".tmp"
 	data, err := json.MarshalIndent(cs.store, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(cs.storePath, data, 0600)
+	if err := os.WriteFile(tempFile, data, 0600); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tempFile, cs.storePath); err != nil {
+		os.Remove(tempFile) // Cleanup
+		return err
+	}
+
+	return nil
 }
 
 func (cs *CronService) AddJob(name string, schedule CronSchedule, message string, deliver bool, channel, to string) (*CronJob, error) {
@@ -377,7 +404,10 @@ func (cs *CronService) AddJob(name string, schedule CronSchedule, message string
 		return nil, err
 	}
 
-	return &job, nil
+	// BUG-4 FIX: Return pointer to the job in the slice, not key-value copy
+	// This ensures modifications to the returned pointer affect the store (if re-acquired)
+	// mostly correct logic, but strictly safer to return the live reference.
+	return &cs.store.Jobs[len(cs.store.Jobs)-1], nil
 }
 
 func (cs *CronService) UpdateJob(job *CronJob) error {

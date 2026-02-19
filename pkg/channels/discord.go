@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -27,6 +28,7 @@ type DiscordChannel struct {
 	config      config.DiscordConfig
 	transcriber *voice.GroqTranscriber
 	ctx         context.Context
+	wg          sync.WaitGroup
 }
 
 func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
@@ -88,6 +90,7 @@ func (c *DiscordChannel) Stop(ctx context.Context) error {
 	if err := c.session.Close(); err != nil {
 		return fmt.Errorf("failed to close discord session: %w", err)
 	}
+	c.wg.Wait()
 
 	return nil
 }
@@ -100,6 +103,16 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 	channelID := msg.ChatID
 	if channelID == "" {
 		return fmt.Errorf("channel ID is empty")
+	}
+
+	if msg.Type == bus.MessageTypeTyping {
+		if err := c.session.ChannelTyping(channelID); err != nil {
+			logger.ErrorCF("discord", "Failed to send typing indicator", map[string]any{
+				"error": err.Error(),
+			})
+			return err
+		}
+		return nil
 	}
 
 	runes := []rune(msg.Content)
@@ -122,42 +135,43 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 // Uses natural boundaries (newlines, spaces) and extends messages slightly to avoid breaking code blocks
 func splitMessage(content string, limit int) []string {
 	var messages []string
+	runes := []rune(content)
 
-	for len(content) > 0 {
-		if len(content) <= limit {
-			messages = append(messages, content)
+	for len(runes) > 0 {
+		if len(runes) <= limit {
+			messages = append(messages, string(runes))
 			break
 		}
 
 		msgEnd := limit
 
 		// Find natural split point within the limit
-		msgEnd = findLastNewline(content[:limit], 200)
+		msgEnd = findLastNewline(runes[:limit], 200)
 		if msgEnd <= 0 {
-			msgEnd = findLastSpace(content[:limit], 100)
+			msgEnd = findLastSpace(runes[:limit], 100)
 		}
 		if msgEnd <= 0 {
 			msgEnd = limit
 		}
 
 		// Check if this would end with an incomplete code block
-		candidate := content[:msgEnd]
+		candidate := runes[:msgEnd]
 		unclosedIdx := findLastUnclosedCodeBlock(candidate)
 
 		if unclosedIdx >= 0 {
 			// Message would end with incomplete code block
 			// Try to extend to include the closing ``` (with some buffer)
 			extendedLimit := limit + 500 // Allow 500 char buffer for code blocks
-			if len(content) > extendedLimit {
-				closingIdx := findNextClosingCodeBlock(content, msgEnd)
+			if len(runes) > extendedLimit {
+				closingIdx := findNextClosingCodeBlock(runes, msgEnd)
 				if closingIdx > 0 && closingIdx <= extendedLimit {
 					// Extend to include the closing ```
 					msgEnd = closingIdx
 				} else {
 					// Can't find closing, split before the code block
-					msgEnd = findLastNewline(content[:unclosedIdx], 200)
+					msgEnd = findLastNewline(runes[:unclosedIdx], 200)
 					if msgEnd <= 0 {
-						msgEnd = findLastSpace(content[:unclosedIdx], 100)
+						msgEnd = findLastSpace(runes[:unclosedIdx], 100)
 					}
 					if msgEnd <= 0 {
 						msgEnd = unclosedIdx
@@ -165,7 +179,7 @@ func splitMessage(content string, limit int) []string {
 				}
 			} else {
 				// Remaining content fits within extended limit
-				msgEnd = len(content)
+				msgEnd = len(runes)
 			}
 		}
 
@@ -173,8 +187,8 @@ func splitMessage(content string, limit int) []string {
 			msgEnd = limit
 		}
 
-		messages = append(messages, content[:msgEnd])
-		content = strings.TrimSpace(content[msgEnd:])
+		messages = append(messages, string(runes[:msgEnd]))
+		runes = []rune(strings.TrimSpace(string(runes[msgEnd:])))
 	}
 
 	return messages
@@ -182,7 +196,7 @@ func splitMessage(content string, limit int) []string {
 
 // findLastUnclosedCodeBlock finds the last opening ``` that doesn't have a closing ```
 // Returns the position of the opening ``` or -1 if all code blocks are complete
-func findLastUnclosedCodeBlock(text string) int {
+func findLastUnclosedCodeBlock(text []rune) int {
 	count := 0
 	lastOpenIdx := -1
 
@@ -205,7 +219,7 @@ func findLastUnclosedCodeBlock(text string) int {
 
 // findNextClosingCodeBlock finds the next closing ``` starting from a position
 // Returns the position after the closing ``` or -1 if not found
-func findNextClosingCodeBlock(text string, startIdx int) int {
+func findNextClosingCodeBlock(text []rune, startIdx int) int {
 	for i := startIdx; i < len(text); i++ {
 		if i+2 < len(text) && text[i] == '`' && text[i+1] == '`' && text[i+2] == '`' {
 			return i + 3
@@ -216,7 +230,7 @@ func findNextClosingCodeBlock(text string, startIdx int) int {
 
 // findLastNewline finds the last newline character within the last N characters
 // Returns the position of the newline or -1 if not found
-func findLastNewline(s string, searchWindow int) int {
+func findLastNewline(s []rune, searchWindow int) int {
 	searchStart := len(s) - searchWindow
 	if searchStart < 0 {
 		searchStart = 0
@@ -231,7 +245,7 @@ func findLastNewline(s string, searchWindow int) int {
 
 // findLastSpace finds the last space character within the last N characters
 // Returns the position of the space or -1 if not found
-func findLastSpace(s string, searchWindow int) int {
+func findLastSpace(s []rune, searchWindow int) int {
 	searchStart := len(s) - searchWindow
 	if searchStart < 0 {
 		searchStart = 0
@@ -255,20 +269,17 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content strin
 		done <- err
 	}()
 
-		select {
-		case err := <-done:
-			if err != nil {
-				return fmt.Errorf("failed to send discord message: %w", err)
-			}
-		case <-sendCtx.Done():
-			return fmt.Errorf("send message timeout: %w", sendCtx.Err())
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("failed to send discord message: %w", err)
 		}
-
+	case <-sendCtx.Done():
+		return fmt.Errorf("send message timeout: %w", sendCtx.Err())
+	}
 
 	return nil
 }
-
-
 
 // appendContent 安全地追加内容到现有文本
 func appendContent(content, suffix string) string {
@@ -302,7 +313,9 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 	}
 
 	// Add reaction to acknowledge message receipt
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		if err := s.MessageReactionAdd(m.ChannelID, m.ID, "⚙️"); err != nil {
 			logger.WarnCF("discord", "Failed to add reaction", map[string]any{
 				"error": err.Error(),
