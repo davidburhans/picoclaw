@@ -248,16 +248,16 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	}
 
 	al := &AgentLoop{
-		bus:           msgBus,
-		provider:      provider,
-		config:        cfg,
-		defaultWS:     defaultWS,
-		model:         model,
-		contextWindow: maxTokens,
-		maxIterations: maxToolIterations,
-		timeout:       timeout,
-		workspaces:    make(map[string]*workspaceContext),
-		summarizing:   sync.Map{},
+		bus:              msgBus,
+		provider:         provider,
+		config:           cfg,
+		defaultWS:        defaultWS,
+		model:            model,
+		contextWindow:    maxTokens,
+		maxIterations:    maxToolIterations,
+		timeout:          timeout,
+		workspaces:       make(map[string]*workspaceContext),
+		summarizing:      sync.Map{},
 		sessionLocks:     sync.Map{},
 		sem:              make(chan struct{}, maxConcurrentSessions),
 		summarizationSem: make(chan struct{}, 3), // Limit concurrent summarization tasks to 3
@@ -317,7 +317,7 @@ func (al *AgentLoop) getOrCreateWorkspaceContextByPath(path string) *workspaceCo
 func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	workspace := wctx.path
 	os.MkdirAll(workspace, 0755)
-	
+
 	restrict := true
 	if al.config.Agents.Defaults.RestrictToWorkspace != nil {
 		restrict = *al.config.Agents.Defaults.RestrictToWorkspace
@@ -1088,8 +1088,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				"model":             al.model,
 				"messages_count":    len(messages),
 				"tools_count":       len(providerToolDefs),
-				"max_tokens":        8192,
-				"temperature":       0.7,
+				"max_tokens":        al.contextWindow,
 				"system_prompt_len": len(messages[0].Content),
 			})
 
@@ -1163,66 +1162,66 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			isTokenLimit := fErr != nil && fErr.Reason == providers.FailoverTokenLimit
 
 			if isTokenLimit && retry < maxRetries {
-					logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]interface{}{
-						"error": err.Error(),
-						"retry": retry,
+				logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]interface{}{
+					"error": err.Error(),
+					"retry": retry,
+				})
+
+				// Notify user on first retry only
+				if retry == 0 && !constants.IsInternalChannel(opts.Channel) && opts.SendResponse {
+					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+						Channel: opts.Channel,
+						ChatID:  opts.ChatID,
+						Content: "⚠️ Context window exceeded. Compressing history and retrying...",
 					})
-
-					// Notify user on first retry only
-					if retry == 0 && !constants.IsInternalChannel(opts.Channel) && opts.SendResponse {
-						al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-							Channel: opts.Channel,
-							ChatID:  opts.ChatID,
-							Content: "⚠️ Context window exceeded. Compressing history and retrying...",
-						})
-					}
-
-					// COMPRESSION LOGIC REFACTOR:
-					// To avoid fragile state reloading, we perform a local compression on history
-					// and rebuild the messages list for the retry.
-					history := wctx.sessions.GetHistory(opts.SessionKey)
-					if len(history) > 4 {
-						// Perform emergency compression on the history slice (dropped oldest 50%)
-						// We must maintain tool call/result parity!
-						system := history[0]
-						conversation := history[1 : len(history)-1]
-						last := history[len(history)-1]
-						
-						mid := len(conversation) / 2
-						
-						// Back up mid if it points to a tool result orphan
-						for mid > 0 && conversation[mid].Role == "tool" {
-							mid--
-						}
-						
-						droppedCount := mid
-						newHist := make([]providers.Message, 0, len(history))
-						newHist = append(newHist, system) // System
-						newHist = append(newHist, providers.Message{
-							Role:    "system",
-							Content: fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", droppedCount),
-						})
-						newHist = append(newHist, conversation[mid:]...)
-						newHist = append(newHist, last) // Last message
-
-						// Update session manager so future iterations/rounds don't hit the same limit
-						wctx.sessions.SetHistory(opts.SessionKey, newHist)
-						wctx.sessions.Save(opts.SessionKey)
-
-						// Rebuild messages for CURRENT iteration retry
-						newSummary := wctx.sessions.GetSummary(opts.SessionKey)
-						messages = wctx.contextBuilder.BuildMessages(
-							newHist,
-							newSummary,
-							"", // History already has the user message if iteration > 1 (or we just added it)
-							nil,
-							opts.Channel,
-							opts.ChatID,
-						)
-					}
-
-					continue
 				}
+
+				// COMPRESSION LOGIC REFACTOR:
+				// To avoid fragile state reloading, we perform a local compression on history
+				// and rebuild the messages list for the retry.
+				history := wctx.sessions.GetHistory(opts.SessionKey)
+				if len(history) > 4 {
+					// Perform emergency compression on the history slice (dropped oldest 50%)
+					// We must maintain tool call/result parity!
+					system := history[0]
+					conversation := history[1 : len(history)-1]
+					last := history[len(history)-1]
+
+					mid := len(conversation) / 2
+
+					// Back up mid if it points to a tool result orphan
+					for mid > 0 && conversation[mid].Role == "tool" {
+						mid--
+					}
+
+					droppedCount := mid
+					newHist := make([]providers.Message, 0, len(history))
+					newHist = append(newHist, system) // System
+					newHist = append(newHist, providers.Message{
+						Role:    "system",
+						Content: fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", droppedCount),
+					})
+					newHist = append(newHist, conversation[mid:]...)
+					newHist = append(newHist, last) // Last message
+
+					// Update session manager so future iterations/rounds don't hit the same limit
+					wctx.sessions.SetHistory(opts.SessionKey, newHist)
+					wctx.sessions.Save(opts.SessionKey)
+
+					// Rebuild messages for CURRENT iteration retry
+					newSummary := wctx.sessions.GetSummary(opts.SessionKey)
+					messages = wctx.contextBuilder.BuildMessages(
+						newHist,
+						newSummary,
+						"", // History already has the user message if iteration > 1 (or we just added it)
+						nil,
+						opts.Channel,
+						opts.ChatID,
+					)
+				}
+
+				continue
+			}
 
 			// Real error or success, break loop
 			break
@@ -1249,15 +1248,20 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			break
 		}
 
-		// Log tool calls
-		toolNames := make([]string, 0, len(response.ToolCalls))
+		normalizedToolCalls := make([]providers.ToolCall, 0, len(response.ToolCalls))
 		for _, tc := range response.ToolCalls {
+			normalizedToolCalls = append(normalizedToolCalls, providers.NormalizeToolCall(tc))
+		}
+
+		// Log tool calls
+		toolNames := make([]string, 0, len(normalizedToolCalls))
+		for _, tc := range normalizedToolCalls {
 			toolNames = append(toolNames, tc.Name)
 		}
 		logger.InfoCF("agent", "LLM requested tool calls",
 			map[string]interface{}{
 				"tools":     toolNames,
-				"count":     len(response.ToolCalls),
+				"count":     len(normalizedToolCalls),
 				"iteration": iteration,
 			})
 
@@ -1266,15 +1270,26 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			Role:    "assistant",
 			Content: response.Content,
 		}
-		for _, tc := range response.ToolCalls {
+		for _, tc := range normalizedToolCalls {
 			argumentsJSON, _ := json.Marshal(tc.Arguments)
+			// Copy ExtraContent to ensure thought_signature is persisted for Gemini 3
+			extraContent := tc.ExtraContent
+			thoughtSignature := ""
+			if tc.Function != nil {
+				thoughtSignature = tc.Function.ThoughtSignature
+			}
+
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, providers.ToolCall{
 				ID:   tc.ID,
 				Type: "function",
+				Name: tc.Name,
 				Function: &providers.FunctionCall{
-					Name:      tc.Name,
-					Arguments: string(argumentsJSON),
+					Name:             tc.Name,
+					Arguments:        string(argumentsJSON),
+					ThoughtSignature: thoughtSignature,
 				},
+				ExtraContent:     extraContent,
+				ThoughtSignature: thoughtSignature,
 			})
 		}
 		messages = append(messages, assistantMsg)
@@ -1436,7 +1451,6 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 	// Keep system prompt (usually [0]) and the very last message (user's trigger)
 	// We want to drop the oldest half of the *conversation*
 	// Assuming [0] is system, [1:] is conversation
-	system := history[0]
 	conversation := history[1 : len(history)-1]
 	last := history[len(history)-1]
 
@@ -1454,20 +1468,22 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 		mid--
 	}
 
+	// New history structure:
+	// 1. System Prompt (with compression note appended)
+	// 2. Second half of conversation
+	// 3. Last message
+
 	droppedCount := mid
 	keptConversation := conversation[mid:]
 
 	newHistory := make([]providers.Message, 0)
-	newHistory = append(newHistory, system)
 
-	// Add a note about compression
-	compressionNote := fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", droppedCount)
-
-	// We only modify the messages list here
-	newHistory = append(newHistory, providers.Message{
-		Role:    "system",
-		Content: compressionNote,
-	})
+	// Append compression note to the original system prompt instead of adding a new system message
+	// This avoids having two consecutive system messages which some APIs (like Zhipu) reject
+	compressionNote := fmt.Sprintf("\n\n[System Note: Emergency compression dropped %d oldest messages due to context limit]", droppedCount)
+	enhancedSystemPrompt := history[0]
+	enhancedSystemPrompt.Content = enhancedSystemPrompt.Content + compressionNote
+	newHistory = append(newHistory, enhancedSystemPrompt)
 
 	newHistory = append(newHistory, keptConversation...)
 	newHistory = append(newHistory, last)
@@ -1482,7 +1498,6 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 		"new_count":    len(newHistory),
 	})
 }
-
 
 // getMessageSummary returns a concise summary of messages for logging
 func getMessageSummary(messages []providers.Message) []map[string]interface{} {

@@ -21,6 +21,8 @@ type AgentInstance struct {
 	Fallbacks      []string
 	Workspace      string
 	MaxIterations  int
+	MaxTokens      int
+	Temperature    float64
 	ContextWindow  int
 	Provider       providers.LLMProvider
 	Sessions       *session.SessionManager
@@ -79,6 +81,16 @@ func NewAgentInstance(
 		maxIter = *defaults.MaxToolIterations
 	}
 
+	maxTokens := 8192
+	if defaults.MaxTokens != nil && *defaults.MaxTokens > 0 {
+		maxTokens = *defaults.MaxTokens
+	}
+
+	temperature := 0.7
+	if defaults.Temperature != nil {
+		temperature = *defaults.Temperature
+	}
+
 	// Resolve fallback candidates
 	modelCfg := providers.ModelConfig{
 		Primary:   model,
@@ -93,7 +105,9 @@ func NewAgentInstance(
 		Fallbacks:      fallbacks,
 		Workspace:      workspace,
 		MaxIterations:  maxIter,
-		ContextWindow:  func() int { if defaults.MaxTokens != nil { return *defaults.MaxTokens }; return 8192 }(),
+		MaxTokens:      maxTokens,
+		Temperature:    temperature,
+		ContextWindow:  maxTokens,
 		Provider:       provider,
 		Sessions:       sessionsManager,
 		ContextBuilder: contextBuilder,
@@ -142,5 +156,3 @@ func resolveAgentFallbacks(agentCfg *config.AgentConfig, defaults *config.AgentD
 	}
 	return defaults.ModelFallbacks
 }
-
-

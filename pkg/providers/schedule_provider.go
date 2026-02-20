@@ -138,7 +138,7 @@ func (p *ScheduleProvider) resolveProvider(t time.Time) (LLMProvider, string, er
 		cfgClone.Agents.Defaults.Model = ""
 	}
 
-	provider, err := CreateProvider(cfgClone)
+	provider, _, err := CreateProvider(cfgClone)
 	if err != nil {
 		return nil, "", err
 	}

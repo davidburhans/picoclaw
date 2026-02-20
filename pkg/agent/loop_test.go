@@ -673,7 +673,6 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 	// Call ProcessDirectWithChannel
 	// Note: ProcessDirectWithChannel calls processMessage which will execute runLLMIteration
 	response, err := al.ProcessDirectWithChannel(context.Background(), "Trigger message", sessionKey, "test", "test-chat")
-
 	if err != nil {
 		t.Fatalf("Expected success after retry, got error: %v", err)
 	}

@@ -234,8 +234,8 @@ func TestDefaultConfig_MaxToolIterations(t *testing.T) {
 // TestDefaultConfig_Temperature verifies temperature (0 means provider default)
 func TestDefaultConfig_Temperature(t *testing.T) {
 	cfg := DefaultConfig()
-	if *cfg.Agents.Defaults.Temperature != 0 {
-		t.Errorf("Expected Temperature 0, got %f", *cfg.Agents.Defaults.Temperature)
+	if cfg.Agents.Defaults.Temperature != nil {
+		t.Error("Temperature should be nil when not provided")
 	}
 }
 
@@ -339,8 +339,8 @@ func TestConfig_Complete(t *testing.T) {
 	if cfg.Agents.Defaults.Model == "" {
 		t.Error("Model should not be empty")
 	}
-	if *cfg.Agents.Defaults.Temperature < 0 {
-		t.Error("Temperature should not be negative")
+	if cfg.Agents.Defaults.Temperature != nil {
+		t.Error("Temperature should be nil when not provided")
 	}
 	if *cfg.Agents.Defaults.MaxTokens < 0 {
 		t.Error("MaxTokens should not be negative")

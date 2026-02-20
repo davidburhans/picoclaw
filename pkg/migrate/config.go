@@ -12,13 +12,16 @@ import (
 )
 
 var supportedProviders = map[string]bool{
-	"anthropic":  true,
-	"openai":     true,
-	"openrouter": true,
-	"groq":       true,
-	"zhipu":      true,
-	"vllm":       true,
-	"gemini":     true,
+	"anthropic":      true,
+	"openai":         true,
+	"openrouter":     true,
+	"groq":           true,
+	"zhipu":          true,
+	"vllm":           true,
+	"gemini":         true,
+	"qwen":           true,
+	"deepseek":       true,
+	"github_copilot": true,
 }
 
 var supportedChannels = map[string]bool{
@@ -104,29 +107,25 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 			}
 
 			pc := config.ProviderConfig{APIKey: apiKey, APIBase: apiBase}
-			entries := config.ProviderEntries{"": pc}
 			switch name {
 			case "anthropic":
-				cfg.Providers.Anthropic = entries
+				cfg.Providers.Anthropic = pc
 			case "openai":
-				// Adapt Incoming logic for WebSearch, integrated into ProviderEntries
 				webSearch := getBoolOrDefault(pMap, "web_search", true)
-				// Update the default entry
-				if entry, ok := entries[""]; ok {
-					entry.WebSearch = config.BoolPtr(webSearch)
-					entries[""] = entry
+				pc.WebSearch = config.BoolPtr(webSearch)
+				cfg.Providers.OpenAI = config.OpenAIProviderConfig{
+					ProviderConfig: pc,
 				}
-				cfg.Providers.OpenAI = entries
 			case "openrouter":
-				cfg.Providers.OpenRouter = entries
+				cfg.Providers.OpenRouter = pc
 			case "groq":
-				cfg.Providers.Groq = entries
+				cfg.Providers.Groq = pc
 			case "zhipu":
-				cfg.Providers.Zhipu = entries
+				cfg.Providers.Zhipu = pc
 			case "vllm":
-				cfg.Providers.VLLM = entries
+				cfg.Providers.VLLM = pc
 			case "gemini":
-				cfg.Providers.Gemini = entries
+				cfg.Providers.Gemini = pc
 			}
 		}
 	}
@@ -240,28 +239,37 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 }
 
 func MergeConfig(existing, incoming *config.Config) *config.Config {
-	mergeProvider := func(existing, incoming config.ProviderEntries) config.ProviderEntries {
-		if existing == nil {
-			return incoming
-		}
-		for k, v := range incoming {
-			if _, ok := existing[k]; !ok {
-				existing[k] = v
-			} else if k == "" && existing[k].APIKey == "" {
-				// Special case: if default entry is empty, overwrite it
-				existing[k] = v
-			}
-		}
-		return existing
+	if existing.Providers.DeepSeek.APIKey == "" {
+		existing.Providers.DeepSeek = incoming.Providers.DeepSeek
+	}
+	if existing.Providers.GitHubCopilot.APIBase == "" {
+		existing.Providers.GitHubCopilot = incoming.Providers.GitHubCopilot
+	}
+	if existing.Providers.Qwen.APIKey == "" {
+		existing.Providers.Qwen = incoming.Providers.Qwen
 	}
 
-	existing.Providers.Anthropic = mergeProvider(existing.Providers.Anthropic, incoming.Providers.Anthropic)
-	existing.Providers.OpenAI = mergeProvider(existing.Providers.OpenAI, incoming.Providers.OpenAI)
-	existing.Providers.OpenRouter = mergeProvider(existing.Providers.OpenRouter, incoming.Providers.OpenRouter)
-	existing.Providers.Groq = mergeProvider(existing.Providers.Groq, incoming.Providers.Groq)
-	existing.Providers.Zhipu = mergeProvider(existing.Providers.Zhipu, incoming.Providers.Zhipu)
-	existing.Providers.VLLM = mergeProvider(existing.Providers.VLLM, incoming.Providers.VLLM)
-	existing.Providers.Gemini = mergeProvider(existing.Providers.Gemini, incoming.Providers.Gemini)
+	if existing.Providers.Anthropic.APIKey == "" {
+		existing.Providers.Anthropic = incoming.Providers.Anthropic
+	}
+	if existing.Providers.OpenAI.APIKey == "" {
+		existing.Providers.OpenAI = incoming.Providers.OpenAI
+	}
+	if existing.Providers.OpenRouter.APIKey == "" {
+		existing.Providers.OpenRouter = incoming.Providers.OpenRouter
+	}
+	if existing.Providers.Groq.APIKey == "" {
+		existing.Providers.Groq = incoming.Providers.Groq
+	}
+	if existing.Providers.Zhipu.APIKey == "" {
+		existing.Providers.Zhipu = incoming.Providers.Zhipu
+	}
+	if existing.Providers.VLLM.APIKey == "" {
+		existing.Providers.VLLM = incoming.Providers.VLLM
+	}
+	if existing.Providers.Gemini.APIKey == "" {
+		existing.Providers.Gemini = incoming.Providers.Gemini
+	}
 
 	if !existing.Channels.Telegram.Enabled && incoming.Channels.Telegram.Enabled {
 		existing.Channels.Telegram = incoming.Channels.Telegram

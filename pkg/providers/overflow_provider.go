@@ -45,7 +45,7 @@ func (p *OverflowProvider) Chat(ctx context.Context, messages []Message, tools [
 			cfgClone := *p.cfg // Shallow copy
 			cfgClone.Agents.Defaults.Provider = providerStr
 
-			subProvider, err := CreateProvider(&cfgClone)
+			subProvider, _, err := CreateProvider(&cfgClone)
 			if err != nil {
 				logger.ErrorCF("overflow_provider", "Failed to create sub-provider", map[string]interface{}{
 					"provider": providerStr,
@@ -118,7 +118,7 @@ func (p *OverflowProvider) GetDefaultModel() string {
 		// This is expensive to create just for checking model, but necessary without cache
 		cfgClone := *p.cfg
 		cfgClone.Agents.Defaults.Provider = p.providers[0]
-		if provider, err := CreateProvider(&cfgClone); err == nil {
+		if provider, _, err := CreateProvider(&cfgClone); err == nil {
 			return provider.GetDefaultModel()
 		}
 	}

@@ -245,72 +245,62 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		systemPrompt += "\n\n## Summary of Previous Conversation\n\n" + summary
 	}
 
+	history = sanitizeHistoryForProvider(history)
+
 	messages = append(messages, providers.Message{
 		Role:    "system",
 		Content: systemPrompt,
 	})
 
-	// Add history and current message
-	rawMessages := append([]providers.Message{}, history...)
-	rawMessages = append(rawMessages, providers.Message{
-		Role:    "user",
-		Content: currentMessage,
-	})
+	messages = append(messages, history...)
 
-	// Sanitize messages to ensure strict role alternation
-	// 1. Remove orphaned tool messages at the start (already handled partly by previous fix, but let's be thorough)
-	// 2. Merge consecutive messages with the same role
-	sanitized := []providers.Message{messages[0]} // Start with system prompt
-	for _, m := range rawMessages {
-		if len(sanitized) == 0 {
-			sanitized = append(sanitized, m)
-			continue
-		}
+	if strings.TrimSpace(currentMessage) != "" {
+		messages = append(messages, providers.Message{
+			Role:    "user",
+			Content: currentMessage,
+		})
+	}
 
-		last := &sanitized[len(sanitized)-1]
+	return messages
+}
 
-		// Role alternation logic
-		if m.Role == last.Role && m.Role != "tool" {
-			// Merge consecutive roles (except system and tool)
-			if m.Role != "system" {
-				if last.Content != "" && m.Content != "" {
-					last.Content += "\n\n" + m.Content
-				} else if m.Content != "" {
-					last.Content = m.Content
-				}
-				// Merge tool calls if any
-				if len(m.ToolCalls) > 0 {
-					last.ToolCalls = append(last.ToolCalls, m.ToolCalls...)
-				}
-				logger.DebugCF("agent", "Merged consecutive messages with same role", map[string]interface{}{"role": m.Role})
+func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {
+	if len(history) == 0 {
+		return history
+	}
+
+	sanitized := make([]providers.Message, 0, len(history))
+	for _, msg := range history {
+		switch msg.Role {
+		case "tool":
+			if len(sanitized) == 0 {
+				logger.DebugCF("agent", "Dropping orphaned leading tool message", map[string]interface{}{})
 				continue
 			}
-		}
-
-		// Handle Tool message requirements: must follow assistant message with tool calls
-		// OR follow another tool message that eventually follows an assistant message with tool calls
-		if m.Role == "tool" {
-			// Find the nearest preceding non-tool message
-			foundAssistant := false
-			for j := len(sanitized) - 1; j >= 0; j-- {
-				if sanitized[j].Role == "assistant" {
-					if len(sanitized[j].ToolCalls) > 0 {
-						foundAssistant = true
-					}
-					break
-				}
-				if sanitized[j].Role != "tool" {
-					break // Hit something else (user/system) before assistant
-				}
-			}
-
-			if !foundAssistant {
-				logger.WarnCF("agent", "Removing orphaned tool message from prompt", map[string]interface{}{"tool_call_id": m.ToolCallID})
+			last := sanitized[len(sanitized)-1]
+			if last.Role != "assistant" || len(last.ToolCalls) == 0 {
+				logger.DebugCF("agent", "Dropping orphaned tool message", map[string]interface{}{})
 				continue
 			}
-		}
+			sanitized = append(sanitized, msg)
 
-		sanitized = append(sanitized, m)
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				if len(sanitized) == 0 {
+					logger.DebugCF("agent", "Dropping assistant tool-call turn at history start", map[string]interface{}{})
+					continue
+				}
+				prev := sanitized[len(sanitized)-1]
+				if prev.Role != "user" && prev.Role != "tool" {
+					logger.DebugCF("agent", "Dropping assistant tool-call turn with invalid predecessor", map[string]interface{}{"prev_role": prev.Role})
+					continue
+				}
+			}
+			sanitized = append(sanitized, msg)
+
+		default:
+			sanitized = append(sanitized, msg)
+		}
 	}
 
 	return sanitized

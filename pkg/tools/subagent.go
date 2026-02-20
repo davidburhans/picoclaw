@@ -29,20 +29,22 @@ type SubagentTask struct {
 }
 
 type SubagentManager struct {
-	tasks         map[string]*SubagentTask
-	mu            sync.RWMutex
-	provider      providers.LLMProvider
-	defaultModel  string
-	bus           *bus.MessageBus
-	workspace     string
-	allowedPaths  []string
-	tools         *ToolRegistry
-	maxIterations int
-	maxDepth      int
-	maxTokens     int
-	temperature   float64
-	nextID        int
-	skillsLoader  *skills.SkillsLoader
+	tasks          map[string]*SubagentTask
+	mu             sync.RWMutex
+	provider       providers.LLMProvider
+	defaultModel   string
+	bus            *bus.MessageBus
+	workspace      string
+	allowedPaths   []string
+	tools          *ToolRegistry
+	maxIterations  int
+	maxDepth       int
+	maxTokens      int
+	temperature    float64
+	hasMaxTokens   bool
+	hasTemperature bool
+	nextID         int
+	skillsLoader   *skills.SkillsLoader
 }
 
 func NewSubagentManager(provider providers.LLMProvider, defaultModel, workspace string, allowedPaths []string, bus *bus.MessageBus) *SubagentManager {
@@ -85,6 +87,7 @@ func (sm *SubagentManager) SetMaxTokens(tokens int) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.maxTokens = tokens
+	sm.hasMaxTokens = true
 }
 
 func (sm *SubagentManager) GetMaxTokens() int {
@@ -97,12 +100,23 @@ func (sm *SubagentManager) SetTemperature(temp float64) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.temperature = temp
+	sm.hasTemperature = true
 }
 
 func (sm *SubagentManager) GetTemperature() float64 {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.temperature
+}
+
+// SetLLMOptions sets max tokens and temperature for subagent LLM calls.
+func (sm *SubagentManager) SetLLMOptions(maxTokens int, temperature float64) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.maxTokens = maxTokens
+	sm.hasMaxTokens = true
+	sm.temperature = temperature
+	sm.hasTemperature = true
 }
 
 // SetTools sets the tool registry for subagent execution.
@@ -210,7 +224,20 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, role
 	maxIter := sm.maxIterations
 	maxTokens := sm.maxTokens
 	temperature := sm.temperature
+	hasMaxTokens := sm.hasMaxTokens
+	hasTemperature := sm.hasTemperature
 	sm.mu.RUnlock()
+
+	var llmOptions map[string]any
+	if hasMaxTokens || hasTemperature {
+		llmOptions = map[string]any{}
+		if hasMaxTokens {
+			llmOptions["max_tokens"] = maxTokens
+		}
+		if hasTemperature {
+			llmOptions["temperature"] = temperature
+		}
+	}
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
 		Provider:      sm.provider,
@@ -218,10 +245,7 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, role
 		Tools:         tools,
 		MaxIterations: maxIter,
 		StopTool:      "report_completion",
-		LLMOptions: map[string]any{
-			"max_tokens":  maxTokens,
-			"temperature": temperature,
-		},
+		LLMOptions:    llmOptions,
 	}, messages, task.OriginChannel, task.OriginChatID)
 
 	sm.mu.Lock()
@@ -427,6 +451,8 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	maxIter := sm.maxIterations
 	maxTokens := sm.maxTokens
 	temperature := sm.temperature
+	hasMaxTokens := sm.hasMaxTokens
+	hasTemperature := sm.hasTemperature
 	sm.mu.RUnlock()
 
 	t.mu.RLock()
@@ -434,18 +460,25 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	originChatID := t.originChatID
 	t.mu.RUnlock()
 
+	var llmOptions map[string]any
+	if hasMaxTokens || hasTemperature {
+		llmOptions = map[string]any{}
+		if hasMaxTokens {
+			llmOptions["max_tokens"] = maxTokens
+		}
+		if hasTemperature {
+			llmOptions["temperature"] = temperature
+		}
+	}
+
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
 		Provider:      sm.provider,
 		Model:         sm.defaultModel,
 		Tools:         tools,
 		MaxIterations: maxIter,
 		StopTool:      "report_completion",
-		LLMOptions: map[string]any{
-			"max_tokens":  maxTokens,
-			"temperature": temperature,
-		},
+		LLMOptions:    llmOptions,
 	}, messages, originChannel, originChatID)
-
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("Subagent execution failed: %v", err)).WithError(err)
 	}

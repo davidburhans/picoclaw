@@ -276,13 +276,20 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			}
 		}
 
-		// Stricter path pattern: catch anything that looks like an absolute path, 
+		// Stricter path pattern: catch anything that looks like an absolute path,
 		// a path with separators, or something explicitly trying to go up levels.
-		// We use a more inclusive pattern to catch potential escapes.
-		pathPattern := regexp.MustCompile(`(/[a-zA-Z0-9._\-/]+)|([a-zA-Z]:\\[a-zA-Z0-9._\\/\-]+)|(\.\.[\\/])`)
-		matches := pathPattern.FindAllString(cmd, -1)
+		// We use a more inclusive pattern to catch potential escapes, but we must
+		// exclude URLs (e.g. https://...).
+		pathPattern := regexp.MustCompile(`(^|\s)(/[a-zA-Z0-9._\-/]+)|([a-zA-Z]:\\[a-zA-Z0-9._\\/\-]+)|(\.\.[\\/])`)
+		matches := pathPattern.FindAllStringSubmatch(cmd, -1)
 
-		for _, raw := range matches {
+		for _, match := range matches {
+			raw := strings.TrimSpace(match[0])
+
+			// Skip if it looks like a URL (contains "://")
+			if strings.Contains(raw, "://") {
+				continue
+			}
 			// Skip single slashes or very short patterns that are likely not paths
 			if len(raw) < 2 {
 				continue

@@ -7,17 +7,21 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/tidwall/jsonc"
 )
 
+// rrCounter is a global counter for round-robin load balancing across models.
+var rrCounter atomic.Uint64
+
 // FlexibleStringSlice is a []string that also accepts JSON numbers,
 // so allow_from can contain both "123" and 123.
 type FlexibleStringSlice []string
 
-func BoolPtr(v bool) *bool { return &v }
-func IntPtr(v int) *int { return &v }
+func BoolPtr(v bool) *bool        { return &v }
+func IntPtr(v int) *int           { return &v }
 func FloatPtr(v float64) *float64 { return &v }
 
 func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
@@ -51,14 +55,15 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 
 type Config struct {
 	Agents     AgentsConfig               `json:"agents"`
-	Bindings   []AgentBinding             `json:"bindings,omitempty"` // From Incoming
-	Session    SessionConfig              `json:"session,omitempty"`  // From Incoming
+	Bindings   []AgentBinding             `json:"bindings,omitempty"`
+	Session    SessionConfig              `json:"session,omitempty"`
 	Channels   ChannelsConfig             `json:"channels"`
-	Workspaces map[string]WorkspaceConfig `json:"workspaces"` // From HEAD
-	Providers  ProvidersConfig            `json:"providers"`
+	Workspaces map[string]WorkspaceConfig `json:"workspaces"`
+	Providers  ProvidersConfig            `json:"providers,omitempty"`
+	ModelList  []ModelConfig              `json:"model_list"`
 	Gateway    GatewayConfig              `json:"gateway"`
 	Tools      ToolsConfig                `json:"tools"`
-	MCP        map[string]MCPServerConfig `json:"mcp"` // From HEAD
+	MCP        map[string]MCPServerConfig `json:"mcp"`
 	Heartbeat  HeartbeatConfig            `json:"heartbeat"`
 	Devices    DevicesConfig              `json:"devices"`
 	Memory     MemoryConfig               `json:"memory"`
@@ -72,26 +77,26 @@ type MailboxConfig struct {
 
 type MemoryConfig struct {
 	Enabled   bool            `json:"enabled" env:"PICOCLAW_MEMORY_ENABLED"`
-	Provider  string          `json:"provider" env:"PICOCLAW_MEMORY_PROVIDER"` // e.g. "qdrant"
+	Provider  string          `json:"provider" env:"PICOCLAW_MEMORY_PROVIDER"`
 	Qdrant    QdrantConfig    `json:"qdrant"`
 	Embedding EmbeddingConfig `json:"embedding"`
 }
 
 type QdrantConfig struct {
-	URL            string `json:"url" env:"PICOCLAW_MEMORY_QDRANT_URL"` // e.g. "http://192.168.0.70:6333"
+	URL            string `json:"url" env:"PICOCLAW_MEMORY_QDRANT_URL"`
 	CollectionName string `json:"collection_name" env:"PICOCLAW_MEMORY_QDRANT_COLLECTION_NAME"`
 	APIKey         string `json:"api_key" env:"PICOCLAW_MEMORY_QDRANT_API_KEY"`
 }
 
 type EmbeddingConfig struct {
-	Provider string `json:"provider" env:"PICOCLAW_MEMORY_EMBEDDING_PROVIDER"` // e.g. "openai", "ollama"
-	Model    string `json:"model" env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`       // e.g. "text-embedding-3-small"
-	BaseURL  string `json:"base_url,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_BASE_URL"`
-	APIKey   string `json:"api_key,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_API_KEY"`
-	Timeout   int    `json:"timeout,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_TIMEOUT"`     // seconds
-	ChunkSize int    `json:"chunk_size,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_CHUNK_SIZE"` // characters
-	KeepAlive string `json:"keep_alive,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_KEEP_ALIVE"` // e.g. "30m"
-	NumCtx    int    `json:"num_ctx,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_NUM_CTX"`       // e.g. 8192
+	Provider  string `json:"provider" env:"PICOCLAW_MEMORY_EMBEDDING_PROVIDER"`
+	Model     string `json:"model" env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`
+	BaseURL   string `json:"base_url,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_BASE_URL"`
+	APIKey    string `json:"api_key,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_API_KEY"`
+	Timeout   int    `json:"timeout,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_TIMEOUT"`
+	ChunkSize int    `json:"chunk_size,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_CHUNK_SIZE"`
+	KeepAlive string `json:"keep_alive,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_KEEP_ALIVE"`
+	NumCtx    int    `json:"num_ctx,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_NUM_CTX"`
 }
 
 type WorkspaceConfig struct {
@@ -101,14 +106,35 @@ type WorkspaceConfig struct {
 	AllowedExternalPaths []string            `json:"allowed_external_paths"`
 }
 
+// MarshalJSON implements custom JSON marshaling for Config
+// to omit providers section when empty and session when empty
+func (c Config) MarshalJSON() ([]byte, error) {
+	type Alias Config
+	aux := &struct {
+		Providers *ProvidersConfig `json:"providers,omitempty"`
+		Session   *SessionConfig   `json:"session,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(&c),
+	}
+
+	if !c.Providers.IsEmpty() {
+		aux.Providers = &c.Providers
+	}
+
+	if c.Session.DMScope != "" || len(c.Session.IdentityLinks) > 0 {
+		aux.Session = &c.Session
+	}
+
+	return json.Marshal(aux)
+}
+
 type AgentsConfig struct {
 	Defaults AgentDefaults `json:"defaults"`
 	List     []AgentConfig `json:"list,omitempty"`
 }
 
 // AgentModelConfig supports both string and structured model config.
-// String format: "gpt-4" (just primary, no fallbacks)
-// Object format: {"primary": "gpt-4", "fallbacks": ["claude-haiku"]}
 type AgentModelConfig struct {
 	Primary   string   `json:"primary,omitempty"`
 	Fallbacks []string `json:"fallbacks,omitempty"`
@@ -189,14 +215,14 @@ type AgentDefaults struct {
 	RestrictToWorkspace *bool          `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	Provider            string         `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
 	Model               string         `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
-	ModelFallbacks      []string       `json:"model_fallbacks,omitempty"` // From Incoming
-	ImageModel          string         `json:"image_model,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"` // From Incoming
-	ImageModelFallbacks []string       `json:"image_model_fallbacks,omitempty"` // From Incoming
+	ModelFallbacks      []string       `json:"model_fallbacks,omitempty"`
+	ImageModel          string         `json:"image_model,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks []string       `json:"image_model_fallbacks,omitempty"`
 	MaxTokens           *int           `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature         *float64       `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations   *int           `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	Timeout             *int           `json:"timeout" env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT"` // seconds
-	Subagent            SubagentConfig `json:"subagent"` // From HEAD
+	Timeout             *int           `json:"timeout" env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT"`
+	Subagent            SubagentConfig `json:"subagent"`
 }
 
 type SubagentConfig struct {
@@ -296,7 +322,7 @@ type OneBotConfig struct {
 
 type HeartbeatConfig struct {
 	Enabled  bool `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
-	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"`
 }
 
 type DevicesConfig struct {
@@ -305,22 +331,72 @@ type DevicesConfig struct {
 }
 
 type ProvidersConfig struct {
-	Anthropic    ProviderEntries `json:"anthropic"`
-	OpenAI       ProviderEntries `json:"openai"`
-	OpenRouter   ProviderEntries `json:"openrouter"`
-	Groq         ProviderEntries `json:"groq"`
-	Zhipu        ProviderEntries `json:"zhipu"`
-	VLLM         ProviderEntries `json:"vllm"`
-	Gemini       ProviderEntries `json:"gemini"`
-	Nvidia       ProviderEntries `json:"nvidia"`
-	Ollama       ProviderEntries `json:"ollama"`
-	Moonshot     ProviderEntries `json:"moonshot"`
-	ShengSuanYun ProviderEntries `json:"shengsuanyun"`
-	// Removed duplicate DeepSeek
-	DeepSeek      ProviderEntries `json:"deepseek"`
-	GitHubCopilot ProviderEntries `json:"github_copilot"`
-	Schedule      ScheduleEntries `json:"schedule,omitempty"`
-	Overflow      OverflowEntries `json:"overflow,omitempty"`
+	Anthropic      ProviderConfig       `json:"anthropic"`
+	OpenAI         OpenAIProviderConfig `json:"openai"`
+	OpenRouter     ProviderConfig       `json:"openrouter"`
+	Groq           ProviderConfig       `json:"groq"`
+	Zhipu          ProviderConfig       `json:"zhipu"`
+	VLLM           ProviderConfig       `json:"vllm"`
+	Gemini         ProviderConfig       `json:"gemini"`
+	Nvidia         ProviderConfig       `json:"nvidia"`
+	Ollama         ProviderConfig       `json:"ollama"`
+	Moonshot       ProviderConfig       `json:"moonshot"`
+	ShengSuanYun   ProviderConfig       `json:"shengsuanyun"`
+	DeepSeek       ProviderConfig       `json:"deepseek"`
+	Cerebras       ProviderConfig       `json:"cerebras"`
+	VolcEngine     ProviderConfig       `json:"volcengine"`
+	GitHubCopilot  ProviderConfig       `json:"github_copilot"`
+	Antigravity    ProviderConfig       `json:"antigravity"`
+	Qwen           ProviderConfig       `json:"qwen"`
+	AnthropicV     ProviderEntries      `json:"anthropic_v"`
+	OpenAIV        ProviderEntries      `json:"openai_v"`
+	OpenRouterV    ProviderEntries      `json:"openrouter_v"`
+	GroqV          ProviderEntries      `json:"groq_v"`
+	ZhipuV         ProviderEntries      `json:"zhipu_v"`
+	VLLMV          ProviderEntries      `json:"vllm_v"`
+	GeminiV        ProviderEntries      `json:"gemini_v"`
+	NvidiaV        ProviderEntries      `json:"nvidia_v"`
+	OllamaV        ProviderEntries      `json:"ollama_v"`
+	MoonshotV      ProviderEntries      `json:"moonshot_v"`
+	ShengSuanYunV  ProviderEntries      `json:"shengsuanyun_v"`
+	DeepSeekV      ProviderEntries      `json:"deepseek_v"`
+	CerebrasV      ProviderEntries      `json:"cerebras_v"`
+	VolcEngineV    ProviderEntries      `json:"volcengine_v"`
+	GitHubCopilotV ProviderEntries      `json:"github_copilot_v"`
+	AntigravityV   ProviderEntries      `json:"antigravity_v"`
+	QwenV          ProviderEntries      `json:"qwen_v"`
+	Schedule       ScheduleEntries      `json:"schedule,omitempty"`
+	Overflow       OverflowEntries      `json:"overflow,omitempty"`
+}
+
+// IsEmpty checks if all provider configs are empty
+func (p ProvidersConfig) IsEmpty() bool {
+	return p.Anthropic.APIKey == "" && p.Anthropic.APIBase == "" &&
+		p.OpenAI.APIKey == "" && p.OpenAI.APIBase == "" &&
+		p.OpenRouter.APIKey == "" && p.OpenRouter.APIBase == "" &&
+		p.Groq.APIKey == "" && p.Groq.APIBase == "" &&
+		p.Zhipu.APIKey == "" && p.Zhipu.APIBase == "" &&
+		p.VLLM.APIKey == "" && p.VLLM.APIBase == "" &&
+		p.Gemini.APIKey == "" && p.Gemini.APIBase == "" &&
+		p.Nvidia.APIKey == "" && p.Nvidia.APIBase == "" &&
+		p.Ollama.APIKey == "" && p.Ollama.APIBase == "" &&
+		p.Moonshot.APIKey == "" && p.Moonshot.APIBase == "" &&
+		p.ShengSuanYun.APIKey == "" && p.ShengSuanYun.APIBase == "" &&
+		p.DeepSeek.APIKey == "" && p.DeepSeek.APIBase == "" &&
+		p.Cerebras.APIKey == "" && p.Cerebras.APIBase == "" &&
+		p.VolcEngine.APIKey == "" && p.VolcEngine.APIBase == "" &&
+		p.GitHubCopilot.APIKey == "" && p.GitHubCopilot.APIBase == "" &&
+		p.Antigravity.APIKey == "" && p.Antigravity.APIBase == "" &&
+		p.Qwen.APIKey == "" && p.Qwen.APIBase == ""
+}
+
+// MarshalJSON implements custom JSON marshaling for ProvidersConfig
+func (p ProvidersConfig) MarshalJSON() ([]byte, error) {
+	if p.IsEmpty() {
+		return []byte("null"), nil
+	}
+	type Alias ProvidersConfig
+	return json.Marshal((*Alias)(&p))
 }
 
 type ScheduleEntries map[string]ScheduleConfig
@@ -332,10 +408,8 @@ type OverflowConfig struct {
 }
 
 func (o *OverflowEntries) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as a map (new format)
 	var m map[string]OverflowConfig
 	if err := json.Unmarshal(data, &m); err == nil {
-		// Heuristic: if it's a map, check if keys are named instances or OverflowConfig fields.
 		isOldFormat := false
 		for k := range m {
 			switch strings.ToLower(k) {
@@ -353,7 +427,6 @@ func (o *OverflowEntries) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	// Try to unmarshal as a single config (old format/default)
 	var single OverflowConfig
 	if err := json.Unmarshal(data, &single); err != nil {
 		return err
@@ -363,22 +436,17 @@ func (o *OverflowEntries) UnmarshalJSON(data []byte) error {
 }
 
 func (o OverflowEntries) MarshalJSON() ([]byte, error) {
-	// If it only contains the default entry, marshal as a single object
 	if len(o) == 1 {
 		if single, ok := o[""]; ok {
 			return json.Marshal(single)
 		}
 	}
-	// Otherwise marshal as a map
 	return json.Marshal(map[string]OverflowConfig(o))
 }
 
 func (s *ScheduleEntries) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as a map (new format)
 	var m map[string]ScheduleConfig
 	if err := json.Unmarshal(data, &m); err == nil {
-		// Heuristic: if it's a map, check if keys are named instances or ScheduleConfig fields.
-		// If the map contains known ScheduleConfig fields as keys, it's likely the old format.
 		isOldFormat := false
 		for k := range m {
 			switch strings.ToLower(k) {
@@ -396,7 +464,6 @@ func (s *ScheduleEntries) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	// Try to unmarshal as a single config (old format)
 	var single ScheduleConfig
 	if err := json.Unmarshal(data, &single); err != nil {
 		return err
@@ -406,24 +473,19 @@ func (s *ScheduleEntries) UnmarshalJSON(data []byte) error {
 }
 
 func (s ScheduleEntries) MarshalJSON() ([]byte, error) {
-	// If it only contains the default entry, marshal as a single object
 	if len(s) == 1 {
 		if single, ok := s[""]; ok {
 			return json.Marshal(single)
 		}
 	}
-	// Otherwise marshal as a map
 	return json.Marshal(map[string]ScheduleConfig(s))
 }
 
 type ProviderEntries map[string]ProviderConfig
 
 func (p *ProviderEntries) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as a map (new format)
 	var m map[string]ProviderConfig
 	if err := json.Unmarshal(data, &m); err == nil {
-		// Heuristic: if it's a map, check if keys are named instances or ProviderConfig fields.
-		// If the map contains known ProviderConfig fields as keys, it's likely the old format.
 		isOldFormat := false
 		for k := range m {
 			switch strings.ToLower(k) {
@@ -446,7 +508,6 @@ func (p *ProviderEntries) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	// Try to unmarshal as a single config (old format)
 	var single ProviderConfig
 	if err := json.Unmarshal(data, &single); err != nil {
 		return err
@@ -454,68 +515,93 @@ func (p *ProviderEntries) UnmarshalJSON(data []byte) error {
 	if *p == nil {
 		*p = make(ProviderEntries)
 	}
-	// We need to decide how to merge 'single' into (*p)[""]
-	// If (*p)[""] exists, we merge fields.
 	existing := (*p)[""]
-	if single.Model != "" { existing.Model = single.Model }
-	if single.APIKey != "" { existing.APIKey = single.APIKey }
-	if single.APIBase != "" { existing.APIBase = single.APIBase }
-	if single.Proxy != "" { existing.Proxy = single.Proxy }
-	if single.AuthMethod != "" { existing.AuthMethod = single.AuthMethod }
-	if single.ConnectMode != "" { existing.ConnectMode = single.ConnectMode }
-	if single.MaxTokens != nil { existing.MaxTokens = single.MaxTokens }
-	if single.Temperature != nil { existing.Temperature = single.Temperature }
-	if single.MaxToolIterations != nil { existing.MaxToolIterations = single.MaxToolIterations }
-	if single.Timeout != nil { existing.Timeout = single.Timeout }
-	if single.MaxConcurrentSessions != 0 { existing.MaxConcurrentSessions = single.MaxConcurrentSessions }
-	if single.WebSearch != nil { existing.WebSearch = single.WebSearch }
-	
+	if single.Model != "" {
+		existing.Model = single.Model
+	}
+	if single.APIKey != "" {
+		existing.APIKey = single.APIKey
+	}
+	if single.APIBase != "" {
+		existing.APIBase = single.APIBase
+	}
+	if single.Proxy != "" {
+		existing.Proxy = single.Proxy
+	}
+	if single.AuthMethod != "" {
+		existing.AuthMethod = single.AuthMethod
+	}
+	if single.ConnectMode != "" {
+		existing.ConnectMode = single.ConnectMode
+	}
+	if single.MaxTokens != nil {
+		existing.MaxTokens = single.MaxTokens
+	}
+	if single.Temperature != nil {
+		existing.Temperature = single.Temperature
+	}
+	if single.MaxToolIterations != nil {
+		existing.MaxToolIterations = single.MaxToolIterations
+	}
+	if single.Timeout != nil {
+		existing.Timeout = single.Timeout
+	}
+	if single.MaxConcurrentSessions != 0 {
+		existing.MaxConcurrentSessions = single.MaxConcurrentSessions
+	}
+	if single.WebSearch != nil {
+		existing.WebSearch = single.WebSearch
+	}
+
 	(*p)[""] = existing
 	return nil
 }
 
 func (p ProviderEntries) MarshalJSON() ([]byte, error) {
-	// If it only contains the default entry, marshal as a single object
 	if len(p) == 1 {
 		if single, ok := p[""]; ok {
 			return json.Marshal(single)
 		}
 	}
-	// Otherwise marshal as a map
 	return json.Marshal(map[string]ProviderConfig(p))
 }
 
 type ProviderConfig struct {
-	Model             string   `json:"model,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_MODEL"`
-	APIKey            string   `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase           string   `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy             string   `json:"proxy,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
-	AuthMethod        string   `json:"auth_method,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode       string   `json:"connect_mode,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` //only for Github Copilot, `stdio` or `grpc`
-	MaxTokens         *int     `json:"max_tokens,omitempty"`
-	Temperature       *float64 `json:"temperature,omitempty"`
-	MaxToolIterations *int     `json:"max_tool_iterations,omitempty"`
-	Timeout           *int     `json:"timeout,omitempty"`
-	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
-	WebSearch         *bool    `json:"web_search,omitempty"` // Merged from OpenAIProviderConfig, generalized
+	Model                 string   `json:"model,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_MODEL"`
+	APIKey                string   `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
+	APIBase               string   `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
+	Proxy                 string   `json:"proxy,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
+	AuthMethod            string   `json:"auth_method,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
+	ConnectMode           string   `json:"connect_mode,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"`
+	MaxTokens             *int     `json:"max_tokens,omitempty"`
+	Temperature           *float64 `json:"temperature,omitempty"`
+	MaxToolIterations     *int     `json:"max_tool_iterations,omitempty"`
+	Timeout               *int     `json:"timeout,omitempty"`
+	MaxConcurrentSessions int      `json:"max_concurrent_sessions,omitempty"`
+	WebSearch             *bool    `json:"web_search,omitempty"`
+}
+
+type OpenAIProviderConfig struct {
+	ProviderConfig
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type ScheduleConfig struct {
-	Timezone string          `json:"timezone,omitempty"` // IANA timezone, e.g. "America/Chicago"
+	Timezone string          `json:"timezone,omitempty"`
 	Rules    []ScheduleRule  `json:"rules"`
 	Default  ScheduleDefault `json:"default"`
 }
 
 type ScheduleRule struct {
-	Days     []string       `json:"days,omitempty"`  // e.g. ["mon","tue"]
-	Hours    *ScheduleHours `json:"hours,omitempty"` // optional time window
-	Provider string         `json:"provider"`        // provider to use
-	Model    string         `json:"model,omitempty"` // optional model override
+	Days     []string       `json:"days,omitempty"`
+	Hours    *ScheduleHours `json:"hours,omitempty"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model,omitempty"`
 }
 
 type ScheduleHours struct {
-	Start string `json:"start"` // "HH:MM" 24h format
-	End   string `json:"end"`   // "HH:MM" 24h format
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 type ScheduleDefault struct {
@@ -523,7 +609,32 @@ type ScheduleDefault struct {
 	Model    string `json:"model,omitempty"`
 }
 
-// Removed OpenAIProviderConfig as valid field merged into ProviderConfig
+// ModelConfig represents a model-centric provider configuration.
+type ModelConfig struct {
+	ModelName string `json:"model_name"`
+	Model     string `json:"model"`
+
+	APIBase string `json:"api_base,omitempty"`
+	APIKey  string `json:"api_key"`
+	Proxy   string `json:"proxy,omitempty"`
+
+	AuthMethod  string `json:"auth_method,omitempty"`
+	ConnectMode string `json:"connect_mode,omitempty"`
+	Workspace   string `json:"workspace,omitempty"`
+
+	RPM            int    `json:"rpm,omitempty"`
+	MaxTokensField string `json:"max_tokens_field,omitempty"`
+}
+
+func (c *ModelConfig) Validate() error {
+	if c.ModelName == "" {
+		return fmt.Errorf("model_name is required")
+	}
+	if c.Model == "" {
+		return fmt.Errorf("model is required")
+	}
+	return nil
+}
 
 type GatewayConfig struct {
 	Host string `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
@@ -546,38 +657,45 @@ func (p *ProvidersConfig) Get(providerType, instanceName string) (ProviderConfig
 	var entries ProviderEntries
 	switch strings.ToLower(providerType) {
 	case "anthropic", "claude":
-		entries = p.Anthropic
+		entries = p.AnthropicV
 	case "openai", "gpt":
-		entries = p.OpenAI
+		entries = p.OpenAIV
 	case "openrouter":
-		entries = p.OpenRouter
+		entries = p.OpenRouterV
 	case "groq":
-		entries = p.Groq
+		entries = p.GroqV
 	case "zhipu", "glm":
-		entries = p.Zhipu
+		entries = p.ZhipuV
 	case "vllm":
-		entries = p.VLLM
+		entries = p.VLLMV
 	case "gemini", "google":
-		entries = p.Gemini
+		entries = p.GeminiV
 	case "nvidia":
-		entries = p.Nvidia
+		entries = p.NvidiaV
 	case "ollama":
-		entries = p.Ollama
+		entries = p.OllamaV
 	case "moonshot":
-		entries = p.Moonshot
+		entries = p.MoonshotV
 	case "shengsuanyun":
-		entries = p.ShengSuanYun
+		entries = p.ShengSuanYunV
 	case "deepseek":
-		entries = p.DeepSeek
+		entries = p.DeepSeekV
 	case "github_copilot", "copilot":
-		entries = p.GitHubCopilot
+		entries = p.GitHubCopilotV
+	case "antigravity":
+		entries = p.AntigravityV
+	case "qwen":
+		entries = p.QwenV
+	case "cerebras":
+		entries = p.CerebrasV
+	case "volcengine":
+		entries = p.VolcEngineV
 	default:
 		return ProviderConfig{}, false
 	}
 
 	cfg, ok := entries[instanceName]
 	if !ok && instanceName == "" && len(entries) > 0 {
-		// Fallback: if no instance name provided, use the first available one if "" is not set
 		for _, v := range entries {
 			return v, true
 		}
@@ -616,7 +734,7 @@ type WebToolsConfig struct {
 }
 
 type CronToolsConfig struct {
-	ExecTimeoutMinutes int `json:"exec_timeout_minutes" env:"PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES"` // 0 means no timeout
+	ExecTimeoutMinutes int `json:"exec_timeout_minutes" env:"PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES"`
 }
 
 type ExecConfig struct {
@@ -632,12 +750,12 @@ type ToolsConfig struct {
 
 type MCPServerConfig struct {
 	Enabled   bool              `json:"enabled"`
-	Command   string            `json:"command,omitempty"` // stdio transport
+	Command   string            `json:"command,omitempty"`
 	Args      []string          `json:"args,omitempty"`
-	Cwd       string            `json:"cwd,omitempty"` // working directory
+	Cwd       string            `json:"cwd,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
-	URL       string            `json:"url,omitempty"`       // SSE transport
-	Transport string            `json:"transport,omitempty"` // "sse" (default for URL)
+	URL       string            `json:"url,omitempty"`
+	Transport string            `json:"transport,omitempty"`
 }
 
 func DefaultConfig() *Config {
@@ -650,10 +768,9 @@ func DefaultConfig() *Config {
 				RestrictToWorkspace: BoolPtr(true),
 				Provider:            "",
 				Model:               "glm-4.7",
-				MaxTokens:           IntPtr(0),
-				Temperature:         FloatPtr(0),
-				MaxToolIterations:   IntPtr(0),
-				Timeout:             IntPtr(0), // default 2 minutes
+				MaxTokens:           IntPtr(8192),
+				Temperature:         nil, // nil means use provider default
+				MaxToolIterations:   IntPtr(20),
 
 				Subagent: SubagentConfig{
 					MaxIterations: IntPtr(10),
@@ -662,6 +779,10 @@ func DefaultConfig() *Config {
 					MaxDepth:      IntPtr(5),
 				},
 			},
+		},
+		Bindings: []AgentBinding{},
+		Session: SessionConfig{
+			DMScope: "main",
 		},
 		Channels: ChannelsConfig{
 			WhatsApp: WhatsAppConfig{
@@ -730,16 +851,110 @@ func DefaultConfig() *Config {
 			},
 		},
 		Providers: ProvidersConfig{
-			Anthropic:    ProviderEntries{"": {}},
-			OpenAI:       ProviderEntries{"": {WebSearch: BoolPtr(true)}},
-			OpenRouter:   ProviderEntries{"": {}},
-			Groq:         ProviderEntries{"": {}},
-			Zhipu:        ProviderEntries{"": {}},
-			VLLM:         ProviderEntries{"": {}},
-			Gemini:       ProviderEntries{"": {}},
-			Nvidia:       ProviderEntries{"": {}},
-			Moonshot:     ProviderEntries{"": {}},
-			ShengSuanYun: ProviderEntries{"": {}},
+			OpenAI: OpenAIProviderConfig{},
+		},
+		ModelList: []ModelConfig{
+			{
+				ModelName: "glm-4.7",
+				Model:     "zhipu/glm-4.7",
+				APIBase:   "https://open.bigmodel.cn/api/paas/v4",
+				APIKey:    "",
+			},
+			{
+				ModelName: "gpt-5.2",
+				Model:     "openai/gpt-5.2",
+				APIBase:   "https://api.openai.com/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "claude-sonnet-4.6",
+				Model:     "anthropic/claude-sonnet-4.6",
+				APIBase:   "https://api.anthropic.com/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "deepseek-chat",
+				Model:     "deepseek/deepseek-chat",
+				APIBase:   "https://api.deepseek.com/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "gemini-2.0-flash",
+				Model:     "gemini/gemini-2.0-flash-exp",
+				APIBase:   "https://generativelanguage.googleapis.com/v1beta",
+				APIKey:    "",
+			},
+			{
+				ModelName: "qwen-plus",
+				Model:     "qwen/qwen-plus",
+				APIBase:   "https://dashscope.aliyuncs.com/compatible-mode/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "moonshot-v1-8k",
+				Model:     "moonshot/moonshot-v1-8k",
+				APIBase:   "https://api.moonshot.cn/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "llama-3.3-70b",
+				Model:     "groq/llama-3.3-70b-versatile",
+				APIBase:   "https://api.groq.com/openai/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "openrouter-auto",
+				Model:     "openrouter/auto",
+				APIBase:   "https://openrouter.ai/api/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "nemotron-4-340b",
+				Model:     "nvidia/nemotron-4-340b-instruct",
+				APIBase:   "https://integrate.api.nvidia.com/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "cerebras-llama-3.3-70b",
+				Model:     "cerebras/llama-3.3-70b",
+				APIBase:   "https://api.cerebras.ai/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName: "doubao-pro",
+				Model:     "volcengine/doubao-pro-32k",
+				APIBase:   "https://ark.cn-beijing.volces.com/api/v3",
+				APIKey:    "",
+			},
+			{
+				ModelName: "deepseek-v3",
+				Model:     "shengsuanyun/deepseek-v3",
+				APIBase:   "https://api.shengsuanyun.com/v1",
+				APIKey:    "",
+			},
+			{
+				ModelName:  "gemini-flash",
+				Model:      "antigravity/gemini-3-flash",
+				AuthMethod: "oauth",
+			},
+			{
+				ModelName:  "copilot-gpt-5.2",
+				Model:      "github-copilot/gpt-5.2",
+				APIBase:    "http://localhost:4321",
+				AuthMethod: "oauth",
+			},
+			{
+				ModelName: "llama3",
+				Model:     "ollama/llama3",
+				APIBase:   "http://localhost:11434/v1",
+				APIKey:    "ollama",
+			},
+			{
+				ModelName: "local-model",
+				Model:     "vllm/custom-model",
+				APIBase:   "http://localhost:8000/v1",
+				APIKey:    "",
+			},
 		},
 		Gateway: GatewayConfig{
 			Host: "0.0.0.0",
@@ -768,7 +983,7 @@ func DefaultConfig() *Config {
 				},
 			},
 			Cron: CronToolsConfig{
-				ExecTimeoutMinutes: 5, // default 5 minutes for LLM operations
+				ExecTimeoutMinutes: 5,
 			},
 			Exec: ExecConfig{
 				EnableDenyPatterns: true,
@@ -776,7 +991,7 @@ func DefaultConfig() *Config {
 		},
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,
-			Interval: 30, // default 30 minutes
+			Interval: 30,
 		},
 		Devices: DevicesConfig{
 			Enabled:    false,
@@ -793,8 +1008,8 @@ func DefaultConfig() *Config {
 				CollectionName: "picoclaw",
 			},
 			Embedding: EmbeddingConfig{
-				Provider: "openai",
-				Model:    "text-embedding-3-small",
+				Provider:  "openai",
+				Model:     "text-embedding-3-small",
 				Timeout:   120,
 				ChunkSize: 4096,
 				KeepAlive: "30m",
@@ -815,15 +1030,21 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Strip comments and trailing commas so we can use JSONC
 	data = jsonc.ToJSON(data)
 
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
 
-	// Handle environment variables override
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+
+	if len(cfg.ModelList) == 0 && cfg.HasProvidersConfig() {
+		cfg.ModelList = ConvertProvidersToModelList(cfg)
+	}
+
+	if err := cfg.ValidateModelList(); err != nil {
 		return nil, err
 	}
 
@@ -853,20 +1074,57 @@ func (c *Config) WorkspacePath() string {
 }
 
 func (c *Config) ResolveWorkspace(senderID string) string {
-	// 1. Check for workspace override for this sender/user
 	for name, ws := range c.Workspaces {
 		for _, user := range ws.Users {
 			if user == senderID {
 				return ExpandHome(ws.Path)
 			}
 		}
-		// Also check if the key matches senderID
 		if name == senderID {
 			return ExpandHome(ws.Path)
 		}
 	}
-	// TODO: Implement proper user->workspace mapping
 	return c.WorkspacePath()
+}
+
+func (c *Config) GetAPIKey() string {
+	if c.Providers.OpenRouter.APIKey != "" {
+		return c.Providers.OpenRouter.APIKey
+	}
+	if c.Providers.Anthropic.APIKey != "" {
+		return c.Providers.Anthropic.APIKey
+	}
+	if c.Providers.OpenAI.APIKey != "" {
+		return c.Providers.OpenAI.APIKey
+	}
+	if c.Providers.Gemini.APIKey != "" {
+		return c.Providers.Gemini.APIKey
+	}
+	if c.Providers.Zhipu.APIKey != "" {
+		return c.Providers.Zhipu.APIKey
+	}
+	if c.Providers.Groq.APIKey != "" {
+		return c.Providers.Groq.APIKey
+	}
+	if c.Providers.VLLM.APIKey != "" {
+		return c.Providers.VLLM.APIKey
+	}
+	if c.Providers.ShengSuanYun.APIKey != "" {
+		return c.Providers.ShengSuanYun.APIKey
+	}
+	if c.Providers.Cerebras.APIKey != "" {
+		return c.Providers.Cerebras.APIKey
+	}
+	return ""
+}
+
+func (c *Config) GetAPIBase() string {
+	if c.Providers.OpenRouter.APIKey != "" {
+		if c.Providers.OpenRouter.APIBase != "" {
+			return c.Providers.OpenRouter.APIBase
+		}
+	}
+	return ""
 }
 
 func (c *Config) ResolveWorkspaceName(path string) string {
@@ -901,7 +1159,6 @@ func (c *Config) ResolveMailboxPath() string {
 }
 
 func (c *Config) ResolveRestrictToWorkspace(senderID string) bool {
-	// 1. Check for workspace override for this sender/user
 	for name, ws := range c.Workspaces {
 		for _, user := range ws.Users {
 			if user == senderID {
@@ -918,11 +1175,10 @@ func (c *Config) ResolveRestrictToWorkspace(senderID string) bool {
 		}
 	}
 
-	// Fallback to global default
 	if c.Agents.Defaults.RestrictToWorkspace != nil {
 		return *c.Agents.Defaults.RestrictToWorkspace
 	}
-	return true // Default to true for safety
+	return true
 }
 
 func ExpandHome(path string) string {
@@ -937,4 +1193,60 @@ func ExpandHome(path string) string {
 		return home
 	}
 	return path
+}
+
+// GetModelConfig returns the ModelConfig for the given model name.
+func (c *Config) GetModelConfig(modelName string) (*ModelConfig, error) {
+	matches := c.findMatches(modelName)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("model %q not found in model_list or providers", modelName)
+	}
+	if len(matches) == 1 {
+		return &matches[0], nil
+	}
+
+	idx := rrCounter.Add(1) % uint64(len(matches))
+	return &matches[idx], nil
+}
+
+func (c *Config) findMatches(modelName string) []ModelConfig {
+	var matches []ModelConfig
+	for i := range c.ModelList {
+		if c.ModelList[i].ModelName == modelName {
+			matches = append(matches, c.ModelList[i])
+		}
+	}
+	return matches
+}
+
+// HasProvidersConfig checks if any provider in the old providers config has configuration.
+func (c *Config) HasProvidersConfig() bool {
+	v := c.Providers
+	return v.Anthropic.APIKey != "" || v.Anthropic.APIBase != "" ||
+		v.OpenAI.APIKey != "" || v.OpenAI.APIBase != "" ||
+		v.OpenRouter.APIKey != "" || v.OpenRouter.APIBase != "" ||
+		v.Groq.APIKey != "" || v.Groq.APIBase != "" ||
+		v.Zhipu.APIKey != "" || v.Zhipu.APIBase != "" ||
+		v.VLLM.APIKey != "" || v.VLLM.APIBase != "" ||
+		v.Gemini.APIKey != "" || v.Gemini.APIBase != "" ||
+		v.Nvidia.APIKey != "" || v.Nvidia.APIBase != "" ||
+		v.Ollama.APIKey != "" || v.Ollama.APIBase != "" ||
+		v.Moonshot.APIKey != "" || v.Moonshot.APIBase != "" ||
+		v.ShengSuanYun.APIKey != "" || v.ShengSuanYun.APIBase != "" ||
+		v.DeepSeek.APIKey != "" || v.DeepSeek.APIBase != "" ||
+		v.Cerebras.APIKey != "" || v.Cerebras.APIBase != "" ||
+		v.VolcEngine.APIKey != "" || v.VolcEngine.APIBase != "" ||
+		v.GitHubCopilot.APIKey != "" || v.GitHubCopilot.APIBase != "" ||
+		v.Antigravity.APIKey != "" || v.Antigravity.APIBase != "" ||
+		v.Qwen.APIKey != "" || v.Qwen.APIBase != ""
+}
+
+// ValidateModelList validates all ModelConfig entries in the model_list.
+func (c *Config) ValidateModelList() error {
+	for i := range c.ModelList {
+		if err := c.ModelList[i].Validate(); err != nil {
+			return fmt.Errorf("model_list[%d]: %w", i, err)
+		}
+	}
+	return nil
 }

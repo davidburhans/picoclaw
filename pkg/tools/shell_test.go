@@ -253,3 +253,40 @@ func TestShellTool_AllowedExternalPaths(t *testing.T) {
 		t.Errorf("Expected 'blocked' message, got: %s", result.ForLLM)
 	}
 }
+
+func TestShellTool_SafetyGuardFalsePositives(t *testing.T) {
+	tmpDir := t.TempDir()
+	tool := NewExecTool(tmpDir, nil, true)
+
+	ctx := context.Background()
+
+	testCases := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "Git URL",
+			command: "git clone https://github.com/nearai/ironclaw",
+		},
+		{
+			name:    "GH Repo Pattern",
+			command: "gh repo clone qwibitai/nanoclaw " + filepath.Join(tmpDir, "repos/nanoclaw"),
+		},
+		{
+			name:    "Compound command in quotes",
+			command: `python3 -c "import os; print(os.getcwd())"`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]interface{}{
+				"command": tc.command,
+			}
+			result := tool.Execute(ctx, args)
+			if result.IsError && strings.Contains(result.ForLLM, "blocked by safety guard") {
+				t.Errorf("Command %q was incorrectly blocked: %s", tc.command, result.ForLLM)
+			}
+		})
+	}
+}

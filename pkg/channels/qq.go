@@ -165,6 +165,8 @@ func (c *QQChannel) handleC2CMessage() event.C2CMessageEventHandler {
 		// 转发到消息总线
 		metadata := map[string]string{
 			"message_id": data.ID,
+			"peer_kind":  "direct",
+			"peer_id":    senderID,
 		}
 
 		sessionKey := fmt.Sprintf("qq:c2c:%s", senderID)
@@ -208,6 +210,8 @@ func (c *QQChannel) handleGroupATMessage() event.GroupATMessageEventHandler {
 		metadata := map[string]string{
 			"message_id": data.ID,
 			"group_id":   data.GroupID,
+			"peer_kind":  "group",
+			"peer_id":    data.GroupID,
 		}
 
 		sessionKey := fmt.Sprintf("qq:group:%s", data.GroupID)
