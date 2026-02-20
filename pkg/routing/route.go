@@ -105,7 +105,7 @@ func (r *RouteResolver) ResolveRoute(input RouteInput) ResolvedRoute {
 	}
 
 	// Priority 5: Account binding
-	if match := r.findAccountMatch(bindings); match != nil {
+	if match := r.findAccountMatch(bindings, accountID); match != nil {
 		return choose(match.AgentID, "binding.account")
 	}
 
@@ -151,11 +151,11 @@ func (r *RouteResolver) findPeerMatch(bindings []config.AgentBinding, peer *Rout
 			continue
 		}
 		peerKind := strings.ToLower(strings.TrimSpace(b.Match.Peer.Kind))
-		peerID := strings.TrimSpace(b.Match.Peer.ID)
+		peerID := strings.ToLower(strings.TrimSpace(b.Match.Peer.ID))
 		if peerKind == "" || peerID == "" {
 			continue
 		}
-		if peerKind == strings.ToLower(peer.Kind) && peerID == peer.ID {
+		if peerKind == strings.ToLower(peer.Kind) && peerID == strings.ToLower(peer.ID) {
 			return b
 		}
 	}
@@ -165,8 +165,8 @@ func (r *RouteResolver) findPeerMatch(bindings []config.AgentBinding, peer *Rout
 func (r *RouteResolver) findGuildMatch(bindings []config.AgentBinding, guildID string) *config.AgentBinding {
 	for i := range bindings {
 		b := &bindings[i]
-		matchGuild := strings.TrimSpace(b.Match.GuildID)
-		if matchGuild != "" && matchGuild == guildID {
+		matchGuild := strings.ToLower(strings.TrimSpace(b.Match.GuildID))
+		if matchGuild != "" && matchGuild == strings.ToLower(guildID) {
 			return &bindings[i]
 		}
 	}
@@ -176,22 +176,25 @@ func (r *RouteResolver) findGuildMatch(bindings []config.AgentBinding, guildID s
 func (r *RouteResolver) findTeamMatch(bindings []config.AgentBinding, teamID string) *config.AgentBinding {
 	for i := range bindings {
 		b := &bindings[i]
-		matchTeam := strings.TrimSpace(b.Match.TeamID)
-		if matchTeam != "" && matchTeam == teamID {
+		matchTeam := strings.ToLower(strings.TrimSpace(b.Match.TeamID))
+		if matchTeam != "" && matchTeam == strings.ToLower(teamID) {
 			return &bindings[i]
 		}
 	}
 	return nil
 }
 
-func (r *RouteResolver) findAccountMatch(bindings []config.AgentBinding) *config.AgentBinding {
+func (r *RouteResolver) findAccountMatch(bindings []config.AgentBinding, accountID string) *config.AgentBinding {
 	for i := range bindings {
 		b := &bindings[i]
-		accountID := strings.TrimSpace(b.Match.AccountID)
-		if accountID == "*" {
+		matchAccountID := strings.TrimSpace(b.Match.AccountID)
+		if matchAccountID == "*" {
 			continue
 		}
 		if b.Match.Peer != nil || b.Match.GuildID != "" || b.Match.TeamID != "" {
+			continue
+		}
+		if !matchesAccountID(matchAccountID, accountID) {
 			continue
 		}
 		return &bindings[i]

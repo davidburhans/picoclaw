@@ -59,9 +59,6 @@ func RunToolLoop(ctx context.Context, config ToolLoopConfig, messages []provider
 			llmOpts = map[string]any{}
 		}
 		// 3. Call LLM with wait for concurrency slots
-		if llmOpts == nil {
-			llmOpts = make(map[string]interface{})
-		}
 		llmOpts["wait"] = true
 
 		response, err := config.Provider.Chat(ctx, messages, providerToolDefs, config.Model, llmOpts)
@@ -108,7 +105,12 @@ func RunToolLoop(ctx context.Context, config ToolLoopConfig, messages []provider
 			Content: response.Content,
 		}
 		for _, tc := range normalizedToolCalls {
-			argumentsJSON, _ := json.Marshal(tc.Arguments)
+			argumentsJSON, err := json.Marshal(tc.Arguments)
+			if err != nil {
+				logger.ErrorCF("toolloop", "Failed to marshal tool arguments",
+					map[string]any{"error": err.Error(), "tool": tc.Name})
+				continue
+			}
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, providers.ToolCall{
 				ID:        tc.ID,
 				Type:      "function",
@@ -124,7 +126,12 @@ func RunToolLoop(ctx context.Context, config ToolLoopConfig, messages []provider
 
 		// 7. Execute tool calls
 		for _, tc := range normalizedToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
+			argsJSON, err := json.Marshal(tc.Arguments)
+			if err != nil {
+				logger.ErrorCF("toolloop", "Failed to marshal tool arguments",
+					map[string]any{"error": err.Error(), "tool": tc.Name})
+				continue
+			}
 			argsPreview := utils.Truncate(string(argsJSON), 200)
 			logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
 				map[string]any{

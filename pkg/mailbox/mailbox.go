@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,7 @@ type Message struct {
 
 type Client struct {
 	basePath string
+	mu       sync.RWMutex
 }
 
 func NewClient(basePath string) *Client {
@@ -33,6 +35,9 @@ func (c *Client) getRecipientPath(recipient string) string {
 }
 
 func (c *Client) Send(msg Message) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if msg.ID == "" {
 		msg.ID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
@@ -58,6 +63,9 @@ func (c *Client) Send(msg Message) error {
 }
 
 func (c *Client) List(recipient string) ([]Message, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	dir := c.getRecipientPath(recipient)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return []Message{}, nil
@@ -85,6 +93,9 @@ func (c *Client) List(recipient string) ([]Message, error) {
 }
 
 func (c *Client) ReadMessage(recipient, filename string) (Message, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	path := filepath.Join(c.getRecipientPath(recipient), filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -112,8 +123,11 @@ func (c *Client) ReadMessage(recipient, filename string) (Message, error) {
 }
 
 func (c *Client) MarkRead(recipient, filename string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	oldPath := filepath.Join(c.getRecipientPath(recipient), filename)
-	
+
 	// Create 'read' subdirectory
 	readDir := filepath.Join(c.getRecipientPath(recipient), "read")
 	if err := os.MkdirAll(readDir, 0755); err != nil {

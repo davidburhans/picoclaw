@@ -83,8 +83,8 @@ func (ct *ConcurrencyTracker) WaitAcquire(ctx context.Context, id string, max in
 			ct.mu.Unlock()
 			return nil
 		}
-		
-		// Determine position
+
+		// Determine position while holding lock to avoid stale reads
 		pos := -1
 		for i, w := range ct.waiters[id] {
 			if w == msgChan {
@@ -158,7 +158,7 @@ func (ct *ConcurrencyTracker) Release(id string) {
 
 	if ct.counts[id] > 0 {
 		ct.counts[id]--
-		
+
 		// Notify waiters for THIS id about position changes
 		for i, w := range ct.waiters[id] {
 			select {
@@ -201,6 +201,7 @@ func (ct *ConcurrencyTracker) Reset() {
 	close(ct.globalSignal)
 	ct.globalSignal = make(chan struct{})
 }
+
 // ConcurrencyWrapper decorates an LLMProvider with concurrency tracking.
 type ConcurrencyWrapper struct {
 	LLMProvider

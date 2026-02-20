@@ -153,7 +153,6 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]interfac
 				"slug":     slug,
 				"version":  result.Version,
 			})
-		_ = err
 	}
 
 	// Build result with moderation warning if suspicious.
