@@ -261,7 +261,7 @@ picoclaw onboard
 > 2. `config.json` 中的 `providers.<name>.<instance>`
 > 3. 全局内部默认值（例如：`glm-4.7`, `8192` tokens 等）
 
-> **新功能**: `model_list` 配置格式支持零代码添加 provider。详见[模型配置](#-模型配置-model_list)章节。
+> **新功能**: `model_list` 配置格式支持零代码添加 provider。详见[模型配置](#模型配置-model_list)章节。
 
 **3. 获取 API Key**
 

@@ -255,7 +255,7 @@ picoclaw onboard
 > 2. `providers.<name>.<instance>` in `config.json`
 > 3. Global internal defaults (e.g., `glm-4.7`, `8192` tokens, etc.)
 
-> **New**: The `model_list` configuration format allows zero-code provider addition. See [Model Configuration](#-model-configuration) for details.
+> **New**: The `model_list` configuration format allows zero-code provider addition. See [Model Configuration](#model-configuration-model_list) for details.
 
 **3. Get API Keys**
 
