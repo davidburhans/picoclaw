@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +34,7 @@ type DiscordChannel struct {
 
 	reactionMu      sync.Mutex
 	activeReactions map[string]string // messageID → emoji (currently added position emoji)
+	botUserID       string            // stored for mention checking
 }
 
 func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
@@ -45,12 +46,12 @@ func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordC
 	base := NewBaseChannel("discord", cfg, bus, cfg.AllowFrom)
 
 	return &DiscordChannel{
-		BaseChannel: base,
-		session:     session,
-		config:      cfg,
-		transcriber: nil,
-		ctx:         context.Background(),
-		typingStop:  make(map[string]chan struct{}),
+		BaseChannel:     base,
+		session:         session,
+		config:          cfg,
+		transcriber:     nil,
+		ctx:             context.Background(),
+		typingStop:      make(map[string]chan struct{}),
 		activeReactions: make(map[string]string),
 	}, nil
 }
@@ -70,6 +71,14 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	logger.InfoC("discord", "Starting Discord bot")
 
 	c.ctx = ctx
+
+	// Get bot user ID before opening session to avoid race condition
+	botUser, err := c.session.User("@me")
+	if err != nil {
+		return fmt.Errorf("failed to get bot user: %w", err)
+	}
+	c.botUserID = botUser.ID
+
 	c.session.AddHandler(c.handleMessage)
 
 	if err := c.session.Open(); err != nil {
@@ -78,10 +87,6 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 
 	c.setRunning(true)
 
-	botUser, err := c.session.User("@me")
-	if err != nil {
-		return fmt.Errorf("failed to get bot user: %w", err)
-	}
 	logger.InfoCF("discord", "Discord bot connected", map[string]any{
 		"username": botUser.Username,
 		"user_id":  botUser.ID,
@@ -180,7 +185,7 @@ func (c *DiscordChannel) handleReaction(msg bus.OutboundMessage) error {
 
 			c.reactionMu.Lock()
 			oldEmoji := c.activeReactions[msgID]
-			
+
 			// Only update if it changed
 			if newEmoji != oldEmoji {
 				// Remove old one if exists
@@ -222,7 +227,7 @@ func (c *DiscordChannel) handleReaction(msg bus.OutboundMessage) error {
 		if oldEmoji != "" {
 			c.session.MessageReactionRemove(msg.ChatID, msgID, oldEmoji, "@me")
 		}
-		
+
 		// Fallback: cleaning up common ones just in case tracking missed one (e.g. restart)
 		// But let's avoid the loop if we have tracking.
 		return nil
@@ -231,9 +236,8 @@ func (c *DiscordChannel) handleReaction(msg bus.OutboundMessage) error {
 	return nil
 }
 
-
 func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content string) error {
-	// 使用传入的 ctx 进行超时控制
+	// Use the passed ctx for timeout control
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 
@@ -255,7 +259,7 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content strin
 	return nil
 }
 
-// appendContent 安全地追加内容到现有文本
+// appendContent safely appends content to existing text
 func appendContent(content, suffix string) string {
 	if content == "" {
 		return suffix
@@ -272,7 +276,7 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 		return
 	}
 
-	// 检查白名单，避免为被拒绝的用户下载附件和转录
+	// Check allowlist first to avoid downloading attachments and transcribing for rejected users
 	if !c.IsAllowed(m.Author.ID) {
 		logger.DebugCF("discord", "Message rejected by allowlist", map[string]any{
 			"user_id": m.Author.ID,
@@ -283,6 +287,24 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 	// Reactions will be added by the AgentLoop via the message bus
 	// to provide accurate status (queueing, processing, etc.)
 
+	// If configured to only respond to mentions, check if bot is mentioned
+	// Skip this check for DMs (GuildID is empty) - DMs should always be responded to
+	if c.config.MentionOnly && m.GuildID != "" {
+		isMentioned := false
+		for _, mention := range m.Mentions {
+			if mention.ID == c.botUserID {
+				isMentioned = true
+				break
+			}
+		}
+		if !isMentioned {
+			logger.DebugCF("discord", "Message ignored - bot not mentioned", map[string]any{
+				"user_id": m.Author.ID,
+			})
+			return
+		}
+	}
+
 	senderID := m.Author.ID
 	senderName := m.Author.Username
 	if m.Author.Discriminator != "" && m.Author.Discriminator != "0" {
@@ -290,10 +312,11 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 	}
 
 	content := m.Content
+	content = c.stripBotMention(content)
 	mediaPaths := make([]string, 0, len(m.Attachments))
 	localFiles := make([]string, 0, len(m.Attachments))
 
-	// 确保临时文件在函数返回时被清理
+	// Ensure temp files are cleaned up when function returns
 	defer func() {
 		for _, file := range localFiles {
 			if err := os.Remove(file); err != nil {
@@ -317,7 +340,7 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 				if c.transcriber != nil && c.transcriber.IsAvailable() {
 					ctx, cancel := context.WithTimeout(c.getContext(), transcriptionTimeout)
 					result, err := c.transcriber.Transcribe(ctx, localPath)
-					cancel() // 立即释放context资源，避免在for循环中泄漏
+					cancel() // Release context resources immediately to avoid leaks in for loop
 
 					if err != nil {
 						logger.ErrorCF("discord", "Voice transcription failed", map[string]any{
@@ -439,4 +462,16 @@ func (c *DiscordChannel) downloadAttachment(url, filename string) string {
 	return utils.DownloadFile(url, filename, utils.DownloadOptions{
 		LoggerPrefix: "discord",
 	})
+}
+
+// stripBotMention removes the bot mention from the message content.
+// Discord mentions have the format <@USER_ID> or <@!USER_ID> (with nickname).
+func (c *DiscordChannel) stripBotMention(text string) string {
+	if c.botUserID == "" {
+		return text
+	}
+	// Remove both regular mention <@USER_ID> and nickname mention <@!USER_ID>
+	text = strings.ReplaceAll(text, fmt.Sprintf("<@%s>", c.botUserID), "")
+	text = strings.ReplaceAll(text, fmt.Sprintf("<@!%s>", c.botUserID), "")
+	return strings.TrimSpace(text)
 }
