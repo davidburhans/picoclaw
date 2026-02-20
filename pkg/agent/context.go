@@ -14,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 type ContextBuilder struct {
@@ -26,11 +27,7 @@ type ContextBuilder struct {
 }
 
 func getGlobalConfigDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".picoclaw")
+	return utils.ExpandHome("~/.picoclaw")
 }
 
 func NewContextBuilder(workspace, agentName string) *ContextBuilder {
@@ -214,8 +211,6 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 }
 
 func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID string) []providers.Message {
-	messages := []providers.Message{}
-
 	systemPrompt := cb.BuildSystemPrompt()
 
 	// Add Current Session info if provided
@@ -223,45 +218,51 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
 	}
 
-	// Log system prompt summary for debugging (debug mode only)
-	logger.DebugCF("agent", "System prompt built",
-		map[string]interface{}{
-			"total_chars":   len(systemPrompt),
-			"total_lines":   strings.Count(systemPrompt, "\n") + 1,
-			"section_count": strings.Count(systemPrompt, "\n\n---\n\n") + 1,
-		})
-
-	// Log preview of system prompt (avoid logging huge content)
-	preview := systemPrompt
-	if len(preview) > 500 {
-		preview = preview[:500] + "... (truncated)"
-	}
-	logger.DebugCF("agent", "System prompt preview",
-		map[string]interface{}{
-			"preview": preview,
-		})
-
 	if summary != "" {
 		systemPrompt += "\n\n## Summary of Previous Conversation\n\n" + summary
 	}
 
+	// 1. Sanitize history
 	history = sanitizeHistoryForProvider(history)
 
-	messages = append(messages, providers.Message{
-		Role:    "system",
-		Content: systemPrompt,
-	})
-
-	messages = append(messages, history...)
+	// 2. Prepare raw list (system + history + current)
+	raw := []providers.Message{
+		{
+			Role:    "system",
+			Content: systemPrompt,
+		},
+	}
+	raw = append(raw, history...)
 
 	if strings.TrimSpace(currentMessage) != "" {
-		messages = append(messages, providers.Message{
+		raw = append(raw, providers.Message{
 			Role:    "user",
 			Content: currentMessage,
 		})
 	}
 
-	return messages
+	// 3. Merge consecutive roles (mostly for user messages)
+	if len(raw) <= 1 {
+		return raw
+	}
+
+	merged := make([]providers.Message, 0, len(raw))
+	merged = append(merged, raw[0])
+
+	for i := 1; i < len(raw); i++ {
+		lastIdx := len(merged) - 1
+		if raw[i].Role == merged[lastIdx].Role && raw[i].Role != "tool" && raw[i].Role != "assistant" {
+			// Merge content
+			merged[lastIdx].Content += "\n\n" + raw[i].Content
+		} else if raw[i].Role == merged[lastIdx].Role && raw[i].Role == "assistant" && len(raw[i].ToolCalls) == 0 && len(merged[lastIdx].ToolCalls) == 0 {
+			// Merge assistant content if no tool calls involved
+			merged[lastIdx].Content += "\n\n" + raw[i].Content
+		} else {
+			merged = append(merged, raw[i])
+		}
+	}
+
+	return merged
 }
 
 func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {
@@ -278,22 +279,44 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 				continue
 			}
 			last := sanitized[len(sanitized)-1]
-			if last.Role != "assistant" || len(last.ToolCalls) == 0 {
-				logger.DebugCF("agent", "Dropping orphaned tool message", map[string]interface{}{})
+			if last.Role != "assistant" && last.Role != "tool" {
+				logger.DebugCF("agent", "Dropping orphaned tool message (invalid predecessor)", map[string]interface{}{"last_role": last.Role})
+				continue
+			}
+
+			// If it follows another tool message, we need to find the assistant message before it
+			if last.Role == "tool" {
+				foundAssistantWithCalls := false
+				for i := len(sanitized) - 1; i >= 0; i-- {
+					if sanitized[i].Role == "assistant" {
+						if len(sanitized[i].ToolCalls) > 0 {
+							foundAssistantWithCalls = true
+						}
+						break
+					}
+					if sanitized[i].Role == "user" || sanitized[i].Role == "system" {
+						break
+					}
+				}
+				if !foundAssistantWithCalls {
+					logger.DebugCF("agent", "Dropping orphaned tool message (no assistant with calls found in sequence)", map[string]interface{}{})
+					continue
+				}
+			} else if len(last.ToolCalls) == 0 {
+				// Follows an assistant but it has no tool calls
+				logger.DebugCF("agent", "Dropping orphaned tool message (assistant has no calls)", map[string]interface{}{})
 				continue
 			}
 			sanitized = append(sanitized, msg)
 
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
-				if len(sanitized) == 0 {
-					logger.DebugCF("agent", "Dropping assistant tool-call turn at history start", map[string]interface{}{})
-					continue
-				}
-				prev := sanitized[len(sanitized)-1]
-				if prev.Role != "user" && prev.Role != "tool" {
-					logger.DebugCF("agent", "Dropping assistant tool-call turn with invalid predecessor", map[string]interface{}{"prev_role": prev.Role})
-					continue
+				if len(sanitized) > 0 {
+					prev := sanitized[len(sanitized)-1]
+					if prev.Role != "user" && prev.Role != "tool" {
+						logger.DebugCF("agent", "Dropping assistant tool-call turn with invalid predecessor", map[string]interface{}{"prev_role": prev.Role})
+						continue
+					}
 				}
 			}
 			sanitized = append(sanitized, msg)

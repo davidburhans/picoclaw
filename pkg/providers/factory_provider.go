@@ -66,77 +66,97 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 
 	protocol, modelID := ExtractProtocol(cfg.Model)
 
+	var provider LLMProvider
+	var err error
+
 	switch protocol {
 	case "openai":
 		// OpenAI with OAuth/token auth (Codex-style)
 		if cfg.AuthMethod == "oauth" || cfg.AuthMethod == "token" {
-			provider, err := createCodexAuthProvider()
+			provider, err = createCodexAuthProvider()
 			if err != nil {
 				return nil, "", err
 			}
-			return provider, modelID, nil
+		} else {
+			// OpenAI with API key
+			apiBase := cfg.BaseURL
+			if apiBase == "" {
+				apiBase = cfg.APIBase
+			}
+			isDefaultBase := false
+			if apiBase == "" {
+				apiBase = getDefaultAPIBase(protocol)
+				isDefaultBase = true
+			}
+			if cfg.APIKey == "" && (apiBase == "" || isDefaultBase || strings.Contains(apiBase, "api.openai.com")) {
+				return nil, "", fmt.Errorf("api_key is required for protocol %q", protocol)
+			}
+			provider = NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField)
 		}
-		// OpenAI with API key
-		if cfg.APIKey == "" && cfg.APIBase == "" {
-			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
-		}
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
-		}
-		return NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField), modelID, nil
 
 	case "openrouter", "groq", "zhipu", "gemini", "nvidia",
 		"ollama", "moonshot", "shengsuanyun", "deepseek", "cerebras",
 		"volcengine", "vllm", "qwen":
 		// All other OpenAI-compatible HTTP providers
-		if cfg.APIKey == "" && cfg.APIBase == "" {
-			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
+		apiBase := cfg.BaseURL
+		if apiBase == "" {
+			apiBase = cfg.APIBase
 		}
-		apiBase := cfg.APIBase
 		if apiBase == "" {
 			apiBase = getDefaultAPIBase(protocol)
 		}
-		return NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField), modelID, nil
+		// For these, we only error if BOTH are missing, as some might not need keys (e.g. local ollama/vllm)
+		if cfg.APIKey == "" && apiBase == "" {
+			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
+		}
+		provider = NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField)
 
 	case "anthropic":
 		if cfg.AuthMethod == "oauth" || cfg.AuthMethod == "token" {
 			// Use OAuth credentials from auth store
-			provider, err := createClaudeAuthProvider()
+			provider, err = createClaudeAuthProvider()
 			if err != nil {
 				return nil, "", err
 			}
-			return provider, modelID, nil
+		} else {
+			// Use API key with HTTP API
+			apiBase := cfg.BaseURL
+			if apiBase == "" {
+				apiBase = cfg.APIBase
+			}
+			isDefaultBase := false
+			if apiBase == "" {
+				apiBase = "https://api.anthropic.com/v1"
+				isDefaultBase = true
+			}
+			if cfg.APIKey == "" && (apiBase == "" || isDefaultBase || strings.Contains(apiBase, "api.anthropic.com")) {
+				return nil, "", fmt.Errorf("api_key is required for anthropic protocol (model: %s)", cfg.Model)
+			}
+			provider = NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField)
 		}
-		// Use API key with HTTP API
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.anthropic.com/v1"
-		}
-		if cfg.APIKey == "" {
-			return nil, "", fmt.Errorf("api_key is required for anthropic protocol (model: %s)", cfg.Model)
-		}
-		return NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField), modelID, nil
 
 	case "antigravity":
-		return NewAntigravityProvider(), modelID, nil
+		provider = NewAntigravityProvider()
 
 	case "claude-cli", "claudecli":
 		workspace := cfg.Workspace
 		if workspace == "" {
 			workspace = "."
 		}
-		return NewClaudeCliProvider(workspace), modelID, nil
+		provider = NewClaudeCliProvider(workspace)
 
 	case "codex-cli", "codexcli":
 		workspace := cfg.Workspace
 		if workspace == "" {
 			workspace = "."
 		}
-		return NewCodexCliProvider(workspace), modelID, nil
+		provider = NewCodexCliProvider(workspace)
 
 	case "github-copilot", "copilot":
-		apiBase := cfg.APIBase
+		apiBase := cfg.BaseURL
+		if apiBase == "" {
+			apiBase = cfg.APIBase
+		}
 		if apiBase == "" {
 			apiBase = "localhost:4321"
 		}
@@ -144,15 +164,29 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if connectMode == "" {
 			connectMode = "grpc"
 		}
-		provider, err := NewGitHubCopilotProvider(apiBase, connectMode, modelID)
+		provider, err = NewGitHubCopilotProvider(apiBase, connectMode, modelID)
 		if err != nil {
 			return nil, "", err
 		}
-		return provider, modelID, nil
 
 	default:
 		return nil, "", fmt.Errorf("unknown protocol %q in model %q", protocol, cfg.Model)
 	}
+
+	// Post-processing for all providers
+	if hp, ok := provider.(*HTTPProvider); ok {
+		hp.id = cfg.ModelName
+		if cfg.MaxConcurrentSessions != nil {
+			hp.maxConcurrentSessions = *cfg.MaxConcurrentSessions
+		}
+	}
+
+	// Wrap with concurrency tracking if requested
+	if cfg.MaxConcurrentSessions != nil && *cfg.MaxConcurrentSessions > 0 {
+		provider = NewConcurrencyWrapper(provider)
+	}
+
+	return provider, modelID, nil
 }
 
 // getDefaultAPIBase returns the default API base URL for a given protocol.

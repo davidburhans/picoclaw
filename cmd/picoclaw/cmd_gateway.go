@@ -9,14 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/devices"
 	"github.com/sipeed/picoclaw/pkg/health"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
@@ -75,14 +72,6 @@ func gatewayCmd() {
 			"skills_available": skillsInfo["available"],
 		})
 
-	// Setup cron tool and service
-	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	restrictToWorkspace := true
-	if cfg.Agents.Defaults.RestrictToWorkspace != nil {
-		restrictToWorkspace = *cfg.Agents.Defaults.RestrictToWorkspace
-	}
-	cronService := setupCronTool(agentLoop, msgBus, cfg.WorkspacePath(), restrictToWorkspace, execTimeout, cfg)
-
 	heartbeatService := heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
 		cfg.Heartbeat.Interval,
@@ -117,9 +106,13 @@ func gatewayCmd() {
 	agentLoop.SetChannelManager(channelManager)
 
 	var transcriber *voice.GroqTranscriber
-	if cfg.Providers.Groq.APIKey != "" {
-		transcriber = voice.NewGroqTranscriber(cfg.Providers.Groq.APIKey)
-		logger.InfoC("voice", "Groq voice transcription enabled")
+	// Find Groq API key from ModelList
+	for _, m := range cfg.ModelList {
+		if strings.HasPrefix(m.Model, "groq/") && m.APIKey != "" {
+			transcriber = voice.NewGroqTranscriber(m.APIKey)
+			logger.InfoC("voice", "Groq voice transcription enabled")
+			break
+		}
 	}
 
 	if transcriber != nil {
@@ -155,11 +148,6 @@ func gatewayCmd() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	if err := cronService.Start(); err != nil {
-		fmt.Printf("Error starting cron service: %v\n", err)
-	}
-	fmt.Println("✓ Cron service started")
 
 	if err := heartbeatService.Start(); err != nil {
 		fmt.Printf("Error starting heartbeat service: %v\n", err)
@@ -201,27 +189,7 @@ func gatewayCmd() {
 	healthServer.Stop(context.Background())
 	deviceService.Stop()
 	heartbeatService.Stop()
-	cronService.Stop()
 	agentLoop.Stop()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
-}
-
-func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration, cfg *config.Config) *cron.CronService {
-	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
-
-	// Create cron service
-	cronService := cron.NewCronService(cronStorePath, nil)
-
-	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, []string{}, restrict, execTimeout, cfg)
-	agentLoop.RegisterTool(cronTool)
-
-	// Set the onJob handler
-	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-		result := cronTool.ExecuteJob(context.Background(), job)
-		return result, nil
-	})
-
-	return cronService
 }

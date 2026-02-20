@@ -16,25 +16,20 @@ func TestOverflowProvider_Failover(t *testing.T) {
 
 	// Setup config
 	cfg := &config.Config{
-		Providers: config.ProvidersConfig{
-			OpenAI: config.ProviderEntries{
-				"mock1": config.ProviderConfig{
-					APIKey:                "mock-key",
-					APIBase:               "http://mock-url",
-					MaxConcurrentSessions: 1,
-					Model:                 "gpt-4",
-				},
-				"mock2": config.ProviderConfig{
-					APIKey:                "mock-key",
-					APIBase:               "http://mock-url",
-					MaxConcurrentSessions: 1,
-					Model:                 "gpt-4",
-				},
+		ModelList: []config.ModelConfig{
+			{
+				ModelName: "openai/mock1",
+				Model:     "openai/gpt-4",
+				APIKey:    "mock-key",
+				APIBase:   "http://mock-url",
+				MaxConcurrentSessions: config.IntPtr(1),
 			},
-			Overflow: config.OverflowEntries{
-				"main": config.OverflowConfig{
-					List: []string{"openai/mock1", "openai/mock2"},
-				},
+			{
+				ModelName: "openai/mock2",
+				Model:     "openai/gpt-4",
+				APIKey:    "mock-key",
+				APIBase:   "http://mock-url",
+				MaxConcurrentSessions: config.IntPtr(1),
 			},
 		},
 	}
@@ -101,10 +96,20 @@ func TestOverflowProvider_AllBusy(t *testing.T) {
 	GlobalConcurrencyTracker().Reset()
 
 	cfg := &config.Config{
-		Providers: config.ProvidersConfig{
-			OpenAI: config.ProviderEntries{
-				"mock1": config.ProviderConfig{MaxConcurrentSessions: 1, APIKey: "k", APIBase: "u", Model: "m"},
-				"mock2": config.ProviderConfig{MaxConcurrentSessions: 1, APIKey: "k", APIBase: "u", Model: "m"},
+		ModelList: []config.ModelConfig{
+			{
+				ModelName: "openai/mock1",
+				Model:     "openai/m",
+				APIKey:    "k",
+				APIBase:   "http://localhost",
+				MaxConcurrentSessions: config.IntPtr(1),
+			},
+			{
+				ModelName: "openai/mock2",
+				Model:     "openai/m",
+				APIKey:    "k",
+				APIBase:   "http://localhost",
+				MaxConcurrentSessions: config.IntPtr(1),
 			},
 		},
 	}
@@ -129,11 +134,10 @@ func TestOverflowProvider_Recursion(t *testing.T) {
     GlobalConcurrencyTracker().Reset()
     
     cfg := &config.Config{
-        Providers: config.ProvidersConfig{
-            Overflow: config.OverflowEntries{
-                "loop": config.OverflowConfig{
-                    List: []string{"overflow/loop"},
-                },
+        ModelList: []config.ModelConfig{
+            {
+                ModelName: "overflow/loop",
+                Model:     "overflow/overflow/loop",
             },
         },
     }

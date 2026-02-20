@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -159,21 +160,15 @@ func TestConvertConfig(t *testing.T) {
 			},
 		}
 
-		cfg, warnings, err := ConvertConfig(data)
+		_, warnings, err := ConvertConfig(data)
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
-		if len(warnings) != 0 {
-			t.Errorf("expected no warnings, got %v", warnings)
+		if len(warnings) != 1 {
+			t.Errorf("expected 1 warning (legacy providers), got %v", warnings)
 		}
-		if cfg.Providers.Anthropic[""].APIKey != "sk-ant-test" {
-			t.Errorf("Anthropic.APIKey = %q, want %q", cfg.Providers.Anthropic[""].APIKey, "sk-ant-test")
-		}
-		if cfg.Providers.OpenRouter[""].APIKey != "sk-or-test" {
-			t.Errorf("OpenRouter.APIKey = %q, want %q", cfg.Providers.OpenRouter[""].APIKey, "sk-or-test")
-		}
-		if cfg.Providers.Groq[""].APIKey != "gsk-test" {
-			t.Errorf("Groq.APIKey = %q, want %q", cfg.Providers.Groq[""].APIKey, "gsk-test")
+		if !strings.Contains(warnings[0], "Legacy provider configuration found") {
+			t.Errorf("expected legacy provider warning, got %q", warnings[0])
 		}
 	})
 
@@ -191,9 +186,9 @@ func TestConvertConfig(t *testing.T) {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
 		if len(warnings) != 1 {
-			t.Fatalf("expected 1 warning, got %d", len(warnings))
+			t.Fatalf("expected 1 warning (legacy providers), got %d", len(warnings))
 		}
-		if warnings[0] != "Provider 'unknown_provider' not supported in PicoClaw, skipping" {
+		if !strings.Contains(warnings[0], "Legacy provider configuration found") {
 			t.Errorf("unexpected warning: %s", warnings[0])
 		}
 	})
@@ -321,35 +316,33 @@ func TestSupportedProvidersCompatibility(t *testing.T) {
 }
 
 func TestMergeConfig(t *testing.T) {
-	t.Run("fills empty fields", func(t *testing.T) {
+	t.Run("merges non-empty fields", func(t *testing.T) {
 		existing := config.DefaultConfig()
 		incoming := config.DefaultConfig()
-		incoming.Providers.Anthropic[""] = config.ProviderConfig{APIKey: "sk-ant-incoming"}
-		incoming.Providers.OpenRouter[""] = config.ProviderConfig{APIKey: "sk-or-incoming"}
+		incoming.Tools.Web.Brave.APIKey = "sk-brave-incoming"
 
 		result := MergeConfig(existing, incoming)
-		if result.Providers.Anthropic[""].APIKey != "sk-ant-incoming" {
-			t.Errorf("Anthropic.APIKey = %q, want %q", result.Providers.Anthropic[""].APIKey, "sk-ant-incoming")
-		}
-		if result.Providers.OpenRouter[""].APIKey != "sk-or-incoming" {
-			t.Errorf("OpenRouter.APIKey = %q, want %q", result.Providers.OpenRouter[""].APIKey, "sk-or-incoming")
+		if result.Tools.Web.Brave.APIKey != "sk-brave-incoming" {
+			t.Errorf("Brave.APIKey = %q, want %q", result.Tools.Web.Brave.APIKey, "sk-brave-incoming")
 		}
 	})
 
 	t.Run("preserves existing non-empty fields", func(t *testing.T) {
 		existing := config.DefaultConfig()
-		existing.Providers.Anthropic[""] = config.ProviderConfig{APIKey: "sk-ant-existing"}
+		existing.Tools.Web.Brave.APIKey = "sk-brave-existing"
+		existing.Tools.Web.DuckDuckGo.Enabled = false
 
 		incoming := config.DefaultConfig()
-		incoming.Providers.Anthropic[""] = config.ProviderConfig{APIKey: "sk-ant-incoming"}
-		incoming.Providers.OpenAI[""] = config.ProviderConfig{APIKey: "sk-oai-incoming"}
+		incoming.Tools.Web.Brave.APIKey = "sk-brave-incoming"
+		incoming.Tools.Web.DuckDuckGo.Enabled = true
+		incoming.Tools.Web.DuckDuckGo.MaxResults = 10
 
 		result := MergeConfig(existing, incoming)
-		if result.Providers.Anthropic[""].APIKey != "sk-ant-existing" {
-			t.Errorf("Anthropic.APIKey should be preserved, got %q", result.Providers.Anthropic[""].APIKey)
+		if result.Tools.Web.Brave.APIKey != "sk-brave-existing" {
+			t.Errorf("Brave.APIKey should be preserved, got %q", result.Tools.Web.Brave.APIKey)
 		}
-		if result.Providers.OpenAI[""].APIKey != "sk-oai-incoming" {
-			t.Errorf("OpenAI.APIKey should be filled, got %q", result.Providers.OpenAI[""].APIKey)
+		if result.Tools.Web.DuckDuckGo.MaxResults != 10 {
+			t.Errorf("DuckDuckGo.MaxResults should be filled, got %d", result.Tools.Web.DuckDuckGo.MaxResults)
 		}
 	})
 
@@ -702,12 +695,6 @@ func TestRunFullMigration(t *testing.T) {
 	picoConfig, err := config.LoadConfig(filepath.Join(picoClawHome, "config.json"))
 	if err != nil {
 		t.Fatalf("loading PicoClaw config: %v", err)
-	}
-	if picoConfig.Providers.Anthropic[""].APIKey != "sk-ant-migrate-test" {
-		t.Errorf("Anthropic.APIKey = %q, want %q", picoConfig.Providers.Anthropic[""].APIKey, "sk-ant-migrate-test")
-	}
-	if picoConfig.Providers.OpenRouter[""].APIKey != "sk-or-migrate-test" {
-		t.Errorf("OpenRouter.APIKey = %q, want %q", picoConfig.Providers.OpenRouter[""].APIKey, "sk-or-migrate-test")
 	}
 	if !picoConfig.Channels.Telegram.Enabled {
 		t.Error("Telegram should be enabled")

@@ -14,6 +14,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 type ExecTool struct {
@@ -253,9 +254,12 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 		// Block obvious shell injection/chaining that could be used to bypass path checks
 		// or escape context. While we want to allow simple pipes/redirection within the wrapper,
 		// complex command sequences are risky.
-		// BUG-6 FIX: Allow pipes ('|') and redirections ('>', '<') but block chaining operators (';', '&')
-		// and command substitution ('`', '$').
-		if strings.ContainsAny(cmd, ";`$&\n\r") {
+		// Naive quote stripping to avoid false positives for delimiters inside quotes
+		// (e.g. python -c "import os; ...")
+		quoteRe := regexp.MustCompile(`'[^']*'|"[^"]*"`)
+		strippedCmd := quoteRe.ReplaceAllString(cmd, "QUOTED")
+
+		if strings.ContainsAny(strippedCmd, ";`$&\n\r") {
 			// Blocks compound commands to prevent shell injection escapes
 			return "Command blocked by safety guard (compound commands not allowed)"
 		}
@@ -271,7 +275,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 
 		allowedAbs := make([]string, 0, len(t.allowedPaths))
 		for _, p := range t.allowedPaths {
-			if abs, err := filepath.Abs(config.ExpandHome(p)); err == nil {
+			if abs, err := filepath.Abs(utils.ExpandHome(p)); err == nil {
 				allowedAbs = append(allowedAbs, abs)
 			}
 		}

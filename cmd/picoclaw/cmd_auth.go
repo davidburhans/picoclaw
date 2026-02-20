@@ -121,8 +121,6 @@ func authLoginOpenAI(useDeviceCode bool) {
 
 	appCfg, err := loadConfig()
 	if err == nil {
-		// Update Providers (legacy format)
-		appCfg.Providers.OpenAI.AuthMethod = "oauth"
 
 		// Update or add openai in ModelList
 		foundOpenAI := false
@@ -195,8 +193,6 @@ func authLoginGoogleAntigravity() {
 
 	appCfg, err := loadConfig()
 	if err == nil {
-		// Update Providers (legacy format, for backward compatibility)
-		appCfg.Providers.Antigravity.AuthMethod = "oauth"
 
 		// Update or add antigravity in ModelList
 		foundAntigravity := false
@@ -274,7 +270,6 @@ func authLoginPasteToken(provider string) {
 	if err == nil {
 		switch provider {
 		case "anthropic":
-			appCfg.Providers.Anthropic.AuthMethod = "token"
 			// Update ModelList
 			found := false
 			for i := range appCfg.ModelList {
@@ -294,7 +289,6 @@ func authLoginPasteToken(provider string) {
 			// Update default model
 			appCfg.Agents.Defaults.Model = "claude-sonnet-4.6"
 		case "openai":
-			appCfg.Providers.OpenAI.AuthMethod = "token"
 			// Update ModelList
 			found := false
 			for i := range appCfg.ModelList {
@@ -362,15 +356,6 @@ func authLogoutCmd() {
 					}
 				}
 			}
-			// Clear AuthMethod in Providers (legacy)
-			switch provider {
-			case "openai":
-				appCfg.Providers.OpenAI.AuthMethod = ""
-			case "anthropic":
-				appCfg.Providers.Anthropic.AuthMethod = ""
-			case "google-antigravity", "antigravity":
-				appCfg.Providers.Antigravity.AuthMethod = ""
-			}
 			config.SaveConfig(getConfigPath(), appCfg)
 		}
 
@@ -387,10 +372,6 @@ func authLogoutCmd() {
 			for i := range appCfg.ModelList {
 				appCfg.ModelList[i].AuthMethod = ""
 			}
-			// Clear all AuthMethods in Providers (legacy)
-			appCfg.Providers.OpenAI.AuthMethod = ""
-			appCfg.Providers.Anthropic.AuthMethod = ""
-			appCfg.Providers.Antigravity.AuthMethod = ""
 			config.SaveConfig(getConfigPath(), appCfg)
 		}
 

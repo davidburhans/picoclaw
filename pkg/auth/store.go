@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 type AuthCredential struct {
@@ -49,7 +51,7 @@ func authFilePath() string {
 	if authFile != "" {
 		return authFile
 	}
-	home, _ := os.UserHomeDir()
+	home := utils.ExpandHome("~")
 	return filepath.Join(home, ".picoclaw", "auth.json")
 }
 

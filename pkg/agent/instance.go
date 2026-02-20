@@ -10,6 +10,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 // AgentInstance represents a fully configured agent with its own workspace,
@@ -130,13 +131,13 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 	if wsName != "" {
 		// Check if it's a named workspace in config
 		if wsCfg, ok := cfg.Workspaces[wsName]; ok {
-			return config.ExpandHome(wsCfg.Path), wsCfg.AllowedExternalPaths
+			return utils.ExpandHome(wsCfg.Path), wsCfg.AllowedExternalPaths
 		}
 		// Otherwise treat as a path
-		return config.ExpandHome(wsName), nil
+		return utils.ExpandHome(wsName), nil
 	}
 
-	home, _ := os.UserHomeDir()
+	home := utils.ExpandHome("~")
 	id := routing.NormalizeAgentID(agentCfg.ID)
 	return filepath.Join(home, ".picoclaw", "workspace-"+id), nil
 }

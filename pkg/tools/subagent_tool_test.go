@@ -72,9 +72,9 @@ func (m *MockLLMProvider) GetMaxConcurrent() int {
 
 func TestSubagentManager_SetLLMOptions_AppliesToRunToolLoop(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
 	manager.SetLLMOptions(2048, 0.6)
-	tool := NewSubagentTool(manager)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 	tool.SetContext("cli", "direct")
 
 	ctx := context.Background()

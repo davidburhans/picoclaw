@@ -19,8 +19,8 @@ func TestNewAgentInstance_UsesDefaultsTemperatureAndMaxTokens(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         1234,
-				MaxToolIterations: 5,
+				MaxTokens:         config.IntPtr(1234),
+				MaxToolIterations: config.IntPtr(5),
 			},
 		},
 	}
@@ -51,8 +51,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenZero(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         1234,
-				MaxToolIterations: 5,
+				MaxTokens:         config.IntPtr(1234),
+				MaxToolIterations: config.IntPtr(5),
 			},
 		},
 	}
@@ -80,8 +80,8 @@ func TestNewAgentInstance_DefaultsTemperatureWhenUnset(t *testing.T) {
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
 				Model:             "test-model",
-				MaxTokens:         1234,
-				MaxToolIterations: 5,
+				MaxTokens:         config.IntPtr(1234),
+				MaxToolIterations: config.IntPtr(5),
 			},
 		},
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/skills"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 var (
@@ -190,8 +191,7 @@ func printHelp() {
 }
 
 func getConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".picoclaw", "config.json")
+	return utils.ExpandHome("~/.picoclaw/config.json")
 }
 
 func loadConfig() (*config.Config, error) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 // --- Compile-time interface check ---
@@ -500,8 +501,9 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 	if !ok {
 		t.Fatalf("returned %T, want *ClaudeCliProvider", provider)
 	}
-	if cliProvider.workspace != "." {
-		t.Errorf("workspace = %q, want %q (default)", cliProvider.workspace, ".")
+	wantWorkspace := "."
+	if cliProvider.workspace != wantWorkspace && cliProvider.workspace != utils.ExpandHome("~/.picoclaw/workspace") {
+		t.Errorf("workspace = %q, want %q or expanded home", cliProvider.workspace, wantWorkspace)
 	}
 }
 

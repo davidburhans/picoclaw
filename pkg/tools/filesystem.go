@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 // validatePath ensures the given path is within the workspace or allowed external paths if restrict is true.
@@ -37,7 +37,7 @@ func validatePath(path, workspace string, allowedExternalPaths []string, restric
 		isAllowed := isWithinWorkspace(absPath, absWorkspace)
 		if !isAllowed {
 			for _, p := range allowedExternalPaths {
-				if absP, err := filepath.Abs(config.ExpandHome(p)); err == nil {
+				if absP, err := filepath.Abs(utils.ExpandHome(p)); err == nil {
 					if isWithinWorkspace(absPath, absP) {
 						isAllowed = true
 						break
@@ -57,7 +57,7 @@ func validatePath(path, workspace string, allowedExternalPaths []string, restric
 
 		allowedReals := make([]string, 0, len(allowedExternalPaths))
 		for _, p := range allowedExternalPaths {
-			if absP, err := filepath.Abs(config.ExpandHome(p)); err == nil {
+			if absP, err := filepath.Abs(utils.ExpandHome(p)); err == nil {
 				if resolved, err := filepath.EvalSymlinks(absP); err == nil {
 					allowedReals = append(allowedReals, resolved)
 				} else {

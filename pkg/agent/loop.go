@@ -222,23 +222,13 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	}
 	timeout := time.Duration(timeoutSec) * time.Second
 
-	// Check for provider-specific overrides (now using pointers)
-	providerType, instanceName := config.ResolveProvider(cfg.Agents.Defaults.Provider)
-	if pCfg, ok := cfg.Providers.Get(providerType, instanceName); ok {
-		if pCfg.Model != "" {
-			model = pCfg.Model
+	// Check for model-specific overrides from ModelList
+	if mCfg, err := cfg.GetModelConfig(model); err == nil {
+		if mCfg.MaxTokens != nil {
+			maxTokens = *mCfg.MaxTokens
 		}
-		if pCfg.MaxTokens != nil {
-			maxTokens = *pCfg.MaxTokens
-		}
-		if pCfg.Temperature != nil {
-			// temperature is handled in subagent or directly in Chat calls
-		}
-		if pCfg.MaxToolIterations != nil {
-			maxToolIterations = *pCfg.MaxToolIterations
-		}
-		if pCfg.Timeout != nil {
-			timeout = time.Duration(*pCfg.Timeout) * time.Second
+		if mCfg.Timeout != nil {
+			timeout = time.Duration(*mCfg.Timeout) * time.Second
 		}
 	}
 
@@ -277,7 +267,24 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		}
 
 		if db != nil {
-			embedder := embedding.NewClient(cfg.Memory.Embedding)
+			embedConfig := cfg.Memory.Embedding
+			if cfg.Memory.Qdrant.ModelName != "" {
+				if mCfg, err := cfg.GetModelConfig(cfg.Memory.Qdrant.ModelName); err == nil {
+					embedConfig.Provider = mCfg.Provider
+					embedConfig.Model = mCfg.Model
+					if mCfg.BaseURL != "" {
+						embedConfig.BaseURL = mCfg.BaseURL
+					} else {
+						embedConfig.BaseURL = mCfg.APIBase
+					}
+					embedConfig.APIKey = mCfg.APIKey
+					if mCfg.Timeout != nil {
+						embedConfig.Timeout = *mCfg.Timeout
+					}
+				}
+			}
+
+			embedder := embedding.NewClient(embedConfig)
 			al.memoryManager = memory.NewManager(cfg.Memory, db, embedder)
 			logger.InfoCF("agent", "Long-term memory enabled", map[string]interface{}{"provider": providerType})
 		}
@@ -326,7 +333,7 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	var allowedPaths []string
 	// Check for workspace-specific override
 	for _, ws := range al.config.Workspaces {
-		if config.ExpandHome(ws.Path) == workspace {
+		if utils.ExpandHome(ws.Path) == workspace {
 			if ws.RestrictToWorkspace != nil {
 				restrict = *ws.RestrictToWorkspace
 			}

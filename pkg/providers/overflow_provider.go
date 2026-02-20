@@ -43,7 +43,7 @@ func (p *OverflowProvider) Chat(ctx context.Context, messages []Message, tools [
 			}
 
 			cfgClone := *p.cfg // Shallow copy
-			cfgClone.Agents.Defaults.Provider = providerStr
+			cfgClone.Agents.Defaults.Model = providerStr
 
 			subProvider, _, err := CreateProvider(&cfgClone)
 			if err != nil {
@@ -70,6 +70,11 @@ func (p *OverflowProvider) Chat(ctx context.Context, messages []Message, tools [
 			if err == nil {
 				return response, nil
 			}
+
+			logger.DebugCF("overflow_provider", "Sub-provider chat failed", map[string]interface{}{
+				"provider": providerStr,
+				"error":    err,
+			})
 
 			// Check if error is concurrency related
 			if errors.Is(err, ErrConcurrencyLimit) {
@@ -117,7 +122,7 @@ func (p *OverflowProvider) GetDefaultModel() string {
 	if len(p.providers) > 0 {
 		// This is expensive to create just for checking model, but necessary without cache
 		cfgClone := *p.cfg
-		cfgClone.Agents.Defaults.Provider = p.providers[0]
+		cfgClone.Agents.Defaults.Model = p.providers[0]
 		if provider, _, err := CreateProvider(&cfgClone); err == nil {
 			return provider.GetDefaultModel()
 		}

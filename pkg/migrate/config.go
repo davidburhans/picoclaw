@@ -90,44 +90,10 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 		}
 	}
 
-	if providers, ok := getMap(data, "providers"); ok {
-		for name, val := range providers {
-			pMap, ok := val.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			apiKey, _ := getString(pMap, "api_key")
-			apiBase, _ := getString(pMap, "api_base")
-
-			if !supportedProviders[name] {
-				if apiKey != "" || apiBase != "" {
-					warnings = append(warnings, fmt.Sprintf("Provider '%s' not supported in PicoClaw, skipping", name))
-				}
-				continue
-			}
-
-			pc := config.ProviderConfig{APIKey: apiKey, APIBase: apiBase}
-			switch name {
-			case "anthropic":
-				cfg.Providers.Anthropic = pc
-			case "openai":
-				webSearch := getBoolOrDefault(pMap, "web_search", true)
-				pc.WebSearch = config.BoolPtr(webSearch)
-				cfg.Providers.OpenAI = config.OpenAIProviderConfig{
-					ProviderConfig: pc,
-				}
-			case "openrouter":
-				cfg.Providers.OpenRouter = pc
-			case "groq":
-				cfg.Providers.Groq = pc
-			case "zhipu":
-				cfg.Providers.Zhipu = pc
-			case "vllm":
-				cfg.Providers.VLLM = pc
-			case "gemini":
-				cfg.Providers.Gemini = pc
-			}
-		}
+	// Provider migration is skipped as legacy providers are no longer supported.
+	// Users should manually add entries to model_list.
+	if _, ok := getMap(data, "providers"); ok {
+		warnings = append(warnings, "Legacy provider configuration found. Please manually convert these to model_list entries.")
 	}
 
 	if channels, ok := getMap(data, "channels"); ok {
@@ -239,37 +205,7 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 }
 
 func MergeConfig(existing, incoming *config.Config) *config.Config {
-	if existing.Providers.DeepSeek.APIKey == "" {
-		existing.Providers.DeepSeek = incoming.Providers.DeepSeek
-	}
-	if existing.Providers.GitHubCopilot.APIBase == "" {
-		existing.Providers.GitHubCopilot = incoming.Providers.GitHubCopilot
-	}
-	if existing.Providers.Qwen.APIKey == "" {
-		existing.Providers.Qwen = incoming.Providers.Qwen
-	}
-
-	if existing.Providers.Anthropic.APIKey == "" {
-		existing.Providers.Anthropic = incoming.Providers.Anthropic
-	}
-	if existing.Providers.OpenAI.APIKey == "" {
-		existing.Providers.OpenAI = incoming.Providers.OpenAI
-	}
-	if existing.Providers.OpenRouter.APIKey == "" {
-		existing.Providers.OpenRouter = incoming.Providers.OpenRouter
-	}
-	if existing.Providers.Groq.APIKey == "" {
-		existing.Providers.Groq = incoming.Providers.Groq
-	}
-	if existing.Providers.Zhipu.APIKey == "" {
-		existing.Providers.Zhipu = incoming.Providers.Zhipu
-	}
-	if existing.Providers.VLLM.APIKey == "" {
-		existing.Providers.VLLM = incoming.Providers.VLLM
-	}
-	if existing.Providers.Gemini.APIKey == "" {
-		existing.Providers.Gemini = incoming.Providers.Gemini
-	}
+	// Provider merge skipped as legacy providers are no longer supported.
 
 	if !existing.Channels.Telegram.Enabled && incoming.Channels.Telegram.Enabled {
 		existing.Channels.Telegram = incoming.Channels.Telegram
@@ -295,6 +231,15 @@ func MergeConfig(existing, incoming *config.Config) *config.Config {
 
 	if existing.Tools.Web.Brave.APIKey == "" {
 		existing.Tools.Web.Brave = incoming.Tools.Web.Brave
+	}
+	if !existing.Tools.Web.DuckDuckGo.Enabled && incoming.Tools.Web.DuckDuckGo.Enabled {
+		existing.Tools.Web.DuckDuckGo = incoming.Tools.Web.DuckDuckGo
+	}
+	if existing.Tools.Web.SearXNG.BaseURL == "" && incoming.Tools.Web.SearXNG.BaseURL != "" {
+		existing.Tools.Web.SearXNG = incoming.Tools.Web.SearXNG
+	}
+	if existing.Tools.Web.Perplexity.APIKey == "" && incoming.Tools.Web.Perplexity.APIKey != "" {
+		existing.Tools.Web.Perplexity = incoming.Tools.Web.Perplexity
 	}
 
 	return existing

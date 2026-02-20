@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 func TestAgentModelConfig_UnmarshalString(t *testing.T) {
@@ -251,27 +253,12 @@ func TestDefaultConfig_Gateway(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_Providers verifies provider structure
-func TestDefaultConfig_Providers(t *testing.T) {
+// TestDefaultConfig_ModelList verifies model_list has some defaults
+func TestDefaultConfig_ModelList(t *testing.T) {
 	cfg := DefaultConfig()
-
-	// Verify all providers have a default empty entry
-	check := func(name string, e ProviderEntries) {
-		if len(e) != 1 {
-			t.Errorf("%s should have exactly 1 entry by default, got %d", name, len(e))
-		}
-		if _, ok := e[""]; !ok {
-			t.Errorf("%s should have a default entry with empty key", name)
-		}
+	if len(cfg.ModelList) == 0 {
+		t.Error("model_list should not be empty")
 	}
-
-	check("Anthropic", cfg.Providers.Anthropic)
-	check("OpenAI", cfg.Providers.OpenAI)
-	check("OpenRouter", cfg.Providers.OpenRouter)
-	check("Groq", cfg.Providers.Groq)
-	check("Zhipu", cfg.Providers.Zhipu)
-	check("VLLM", cfg.Providers.VLLM)
-	check("Gemini", cfg.Providers.Gemini)
 }
 
 // TestDefaultConfig_Channels verifies channels are disabled by default
@@ -381,44 +368,6 @@ func TestResolveProvider(t *testing.T) {
 	}
 }
 
-func TestProviderEntries_Unmarshal(t *testing.T) {
-	t.Run("SingleObject", func(t *testing.T) {
-		data := []byte(`{"api_key": "test-key", "model": "test-model"}`)
-		var p ProviderEntries
-		if err := p.UnmarshalJSON(data); err != nil {
-			t.Fatalf("UnmarshalJSON failed: %v", err)
-		}
-		if len(p) != 1 || p[""].APIKey != "test-key" || p[""].Model != "test-model" {
-			t.Errorf("Unexpected entries: %+v", p)
-		}
-	})
-
-	t.Run("MapObject", func(t *testing.T) {
-		data := []byte(`{
-			"inst1": {"api_key": "key1", "model": "mod1"},
-			"inst2": {"api_key": "key2", "model": "mod2"}
-		}`)
-		var p ProviderEntries
-		if err := p.UnmarshalJSON(data); err != nil {
-			t.Fatalf("UnmarshalJSON failed: %v", err)
-		}
-		if len(p) != 2 || p["inst1"].APIKey != "key1" || p["inst2"].APIKey != "key2" {
-			t.Errorf("Unexpected entries: %+v", p)
-		}
-	})
-
-	t.Run("MapWithPotentialConflicts", func(t *testing.T) {
-		// If it's a map but doesn't look like a single config, treat as map
-		data := []byte(`{"llama": {"model": "llama3"}}`)
-		var p ProviderEntries
-		if err := p.UnmarshalJSON(data); err != nil {
-			t.Fatalf("UnmarshalJSON failed: %v", err)
-		}
-		if len(p) != 1 || p["llama"].Model != "llama3" {
-			t.Errorf("Unexpected entries: %+v", p)
-		}
-	})
-}
 
 func TestResolveWorkspace(t *testing.T) {
 	cfg := DefaultConfig()
@@ -438,11 +387,11 @@ func TestResolveWorkspace(t *testing.T) {
 		senderID string
 		want     string
 	}{
-		{"user1", ExpandHome("~/dave")},
-		{"user2", ExpandHome("~/dave")},
-		{"user3", ExpandHome("~/wife")},
-		{"unknown", ExpandHome("~/default")},
-		{"", ExpandHome("~/default")},
+		{"user1", utils.ExpandHome("~/dave")},
+		{"user2", utils.ExpandHome("~/dave")},
+		{"user3", utils.ExpandHome("~/wife")},
+		{"unknown", utils.ExpandHome("~/default")},
+		{"", utils.ExpandHome("~/default")},
 	}
 
 	for _, tt := range tests {
@@ -551,48 +500,35 @@ func TestExpandHome_Windows(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := ExpandHome(tt.input)
+		got := utils.ExpandHome(tt.input)
 		if got != tt.want {
 			t.Errorf("ExpandHome(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
 
-func TestDefaultConfig_OpenAIWebSearchEnabled(t *testing.T) {
-	cfg := DefaultConfig()
-	if cfg.Providers.OpenAI[""].WebSearch == nil || !*cfg.Providers.OpenAI[""].WebSearch {
-		t.Fatal("DefaultConfig().Providers.OpenAI[\"\"].WebSearch should be true")
-	}
-}
-
-func TestLoadConfig_OpenAIWebSearchDefaultsTrueWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"providers":{"openai":{"api_base":""}}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
+func TestGetModelConfig(t *testing.T) {
+	cfg := &Config{
+		ModelList: []ModelConfig{
+			{ModelName: "test-model", Model: "openai/gpt-4"},
+			{ModelName: "another-model", Model: "anthropic/claude-3"},
+		},
 	}
 
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if cfg.Providers.OpenAI[""].WebSearch == nil || !*cfg.Providers.OpenAI[""].WebSearch {
-		t.Fatal("OpenAI codex web search should remain true when unset in config file")
-	}
-}
+	t.Run("Found", func(t *testing.T) {
+		mc, err := cfg.GetModelConfig("test-model")
+		if err != nil {
+			t.Fatalf("GetModelConfig failed: %v", err)
+		}
+		if mc.Model != "openai/gpt-4" {
+			t.Errorf("got model %q, want openai/gpt-4", mc.Model)
+		}
+	})
 
-func TestLoadConfig_OpenAIWebSearchCanBeDisabled(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"providers":{"openai":{"web_search":false}}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if cfg.Providers.OpenAI[""].WebSearch != nil && *cfg.Providers.OpenAI[""].WebSearch {
-		t.Fatal("OpenAI codex web search should be false when disabled in config file")
-	}
+	t.Run("NotFound", func(t *testing.T) {
+		_, err := cfg.GetModelConfig("missing")
+		if err == nil {
+			t.Fatal("expected error for missing model, got nil")
+		}
+	})
 }

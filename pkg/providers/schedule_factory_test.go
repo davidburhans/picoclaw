@@ -8,29 +8,27 @@ import (
 
 func TestCreateProvider_Schedule(t *testing.T) {
 	cfg := &config.Config{
-		Providers: config.ProvidersConfig{
-			Schedule: config.ScheduleEntries{
-				"work": config.ScheduleConfig{
-					Timezone: "UTC",
-					Default: config.ScheduleDefault{
-						Provider: "openai",
-						Model:    "gpt-4",
-					},
+		Schedules: config.ScheduleEntries{
+			"work": config.ScheduleConfig{
+				Timezone: "UTC",
+				Default: config.ScheduleDefault{
+					Provider: "openai",
+					Model:    "gpt-4",
 				},
-				"personal": config.ScheduleConfig{
-					Timezone: "UTC",
-					Default: config.ScheduleDefault{
-						Provider: "anthropic",
-						Model:    "claude-3",
-					},
+			},
+			"personal": config.ScheduleConfig{
+				Timezone: "UTC",
+				Default: config.ScheduleDefault{
+					Provider: "anthropic",
+					Model:    "claude-3",
 				},
 			},
 		},
 	}
 
 	// Test case 1: schedule/work
-	cfg.Agents.Defaults.Provider = "schedule/work"
-	provider, err := CreateProvider(cfg)
+	cfg.Agents.Defaults.Model = "schedule/work"
+	provider, _, err := CreateProvider(cfg)
 	if err != nil {
 		t.Fatalf("CreateProvider(schedule/work) failed: %v", err)
 	}
@@ -39,8 +37,8 @@ func TestCreateProvider_Schedule(t *testing.T) {
 	}
 
 	// Test case 2: schedule/personal
-	cfg.Agents.Defaults.Provider = "schedule/personal"
-	provider, err = CreateProvider(cfg)
+	cfg.Agents.Defaults.Model = "schedule/personal"
+	provider, _, err = CreateProvider(cfg)
 	if err != nil {
 		t.Fatalf("CreateProvider(schedule/personal) failed: %v", err)
 	}
@@ -49,38 +47,26 @@ func TestCreateProvider_Schedule(t *testing.T) {
 	}
 
 	// Test case 3: schedule/missing
-	cfg.Agents.Defaults.Provider = "schedule/missing"
-	_, err = CreateProvider(cfg)
+	cfg.Agents.Defaults.Model = "schedule/missing"
+	_, _, err = CreateProvider(cfg)
 	if err == nil {
 		t.Error("Expected error for missing schedule instance, got nil")
 	}
 }
 
 func TestScheduleProvider_RecursionCheck(t *testing.T) {
-	// Setup a recursive schedule configuration
-	// Note: We can't easily trigger the recursion check without mocking time match
-	// But we can check ResolveProvider directly via CreateProvider logic if we could simulate internal call.
-	// Instead, let's verify that creating a schedule provider with a recursive rule *inside* it works initially,
-	// but fails during runtime resolution.
-
 	cfg := &config.Config{
-		Providers: config.ProvidersConfig{
-			Schedule: config.ScheduleEntries{
-				"recursive": config.ScheduleConfig{
-					Default: config.ScheduleDefault{
-						Provider: "schedule/recursive",
-					},
+		Schedules: config.ScheduleEntries{
+			"recursive": config.ScheduleConfig{
+				Default: config.ScheduleDefault{
+					Provider: "schedule/recursive",
 				},
 			},
 		},
 	}
 
-	schedConfig := cfg.Providers.Schedule["recursive"]
+	schedConfig := cfg.Schedules["recursive"]
 	sched := NewScheduleProvider(cfg, &schedConfig, nil)
-
-	// Try resolveProvider (private method, accessible in test if in same package)
-	// But we are in providers_test package or providers package?
-	// New file is package providers.
 
 	t.Run("ResolveProvider_Recursion", func(t *testing.T) {
 		// We expect resolveProvider to fail

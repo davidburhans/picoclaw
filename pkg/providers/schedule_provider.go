@@ -113,17 +113,18 @@ func (p *ScheduleProvider) resolveProvider(t time.Time) (LLMProvider, string, er
 	}
 
 	// Create a shallow clone of config data to avoid modifying the original.
-	// We manually copy fields instead of struct assignment to avoid copying the sync.RWMutex.
 	cfgClone := &config.Config{
 		Agents:     p.cfg.Agents,
 		Channels:   p.cfg.Channels,
 		Workspaces: p.cfg.Workspaces,
-		Providers:  p.cfg.Providers,
+		ModelList:  p.cfg.ModelList,
 		Gateway:    p.cfg.Gateway,
 		Tools:      p.cfg.Tools,
 		MCP:        p.cfg.MCP,
 		Heartbeat:  p.cfg.Heartbeat,
 		Devices:    p.cfg.Devices,
+		Memory:     p.cfg.Memory,
+		Mailbox:    p.cfg.Mailbox,
 	}
 	cfgClone.Agents.Defaults.Provider = providerType
 

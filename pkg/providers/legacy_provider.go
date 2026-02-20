@@ -7,43 +7,63 @@ package providers
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 // CreateProvider creates a provider based on the configuration.
-// It uses the model_list configuration (new format) to create providers.
-// The old providers config is automatically converted to model_list during config loading.
+// It uses the model_list configuration to create providers.
 // Returns the provider, the model ID to use, and any error.
 func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 	model := cfg.Agents.Defaults.Model
 
-	// Ensure model_list is populated (should be done by LoadConfig, but handle edge cases)
-	if len(cfg.ModelList) == 0 && cfg.HasProvidersConfig() {
-		cfg.ModelList = config.ConvertProvidersToModelList(cfg)
-	}
-
-	// Must have model_list at this point
-	if len(cfg.ModelList) == 0 {
-		return nil, "", fmt.Errorf("no providers configured. Please add entries to model_list in your config")
-	}
-
-	// Get model config from model_list
+	// 1. Try resolve from model_list first
 	modelCfg, err := cfg.GetModelConfig(model)
-	if err != nil {
-		return nil, "", fmt.Errorf("model %q not found in model_list: %w", model, err)
+	if err == nil {
+		// Found in model_list
+		if modelCfg.Workspace == "" {
+			modelCfg.Workspace = cfg.WorkspacePath()
+		}
+
+		protocol, _ := ExtractProtocol(modelCfg.Model)
+		if protocol == "overflow" {
+			return NewOverflowProvider(cfg, modelCfg.Providers), model, nil
+		}
+
+		return CreateProviderFromConfig(modelCfg)
 	}
 
-	// Inject global workspace if not set in model config
-	if modelCfg.Workspace == "" {
-		modelCfg.Workspace = cfg.WorkspacePath()
+	// 2. Not in model_list, try virtual providers
+	providerType, providerName := config.ResolveProvider(model)
+
+	switch providerType {
+	case "schedule":
+		schedConfig, ok := cfg.Schedules[providerName]
+		if !ok {
+			return nil, "", fmt.Errorf("schedule %q not found in schedules", providerName)
+		}
+		return NewScheduleProvider(cfg, &schedConfig, nil), model, nil
+
+	case "overflow":
+		list := strings.Split(providerName, ",")
+		return NewOverflowProvider(cfg, list), model, nil
+
+	case "claude-cli":
+		workspace := cfg.Agents.Defaults.Workspace
+		if workspace == "" {
+			workspace = "."
+		}
+		return NewClaudeCliProvider(utils.ExpandHome(workspace)), "claude-code", nil
+
+	case "codex-code":
+		workspace := cfg.Agents.Defaults.Workspace
+		if workspace == "" {
+			workspace = "."
+		}
+		return NewCodexCliProvider(utils.ExpandHome(workspace)), "codex", nil
 	}
 
-	// Use factory to create provider
-	provider, modelID, err := CreateProviderFromConfig(modelCfg)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create provider for model %q: %w", model, err)
-	}
-
-	return provider, modelID, nil
+	return nil, "", fmt.Errorf("model %q not found in model_list and not a recognized virtual provider", model)
 }
