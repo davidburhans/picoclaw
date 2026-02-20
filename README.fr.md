@@ -61,6 +61,8 @@
 
 🪶 **Ultra-Léger** : Empreinte mémoire <10 Mo — 99% plus petit que Clawdbot pour les fonctionnalités essentielles.
 
+🧠 **Mémoire à Long Terme** : Intégration optionnelle de Qdrant pour l'archivage et la récupération de sessions, permettant à l'agent de se souvenir des contextes passés.
+
 💰 **Coût Minimal** : Suffisamment efficace pour fonctionner sur du matériel à 10$ — 98% moins cher qu'un Mac mini.
 
 ⚡️ **Démarrage Éclair** : Temps de démarrage 400X plus rapide, boot en 1 seconde même sur un cœur unique à 0,6 GHz.

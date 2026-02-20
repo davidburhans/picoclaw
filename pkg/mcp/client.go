@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -292,11 +293,21 @@ func (c *MCPClient) readLoop() {
 func (c *MCPClient) logStderr() {
 	scanner := bufio.NewScanner(c.stderr)
 	for scanner.Scan() {
-		logger.DebugCF("mcp", "MCP server stderr",
-			map[string]interface{}{
-				"server": c.name,
-				"line":   scanner.Text(),
-			})
+		line := scanner.Text()
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "panic") || strings.Contains(lower, "exception") {
+			logger.WarnCF("mcp", "MCP server error on stderr",
+				map[string]interface{}{
+					"server": c.name,
+					"line":   line,
+				})
+		} else {
+			logger.DebugCF("mcp", "MCP server stderr",
+				map[string]interface{}{
+					"server": c.name,
+					"line":   line,
+				})
+		}
 	}
 }
 

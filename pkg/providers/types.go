@@ -17,6 +17,7 @@ type ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
 
 type LLMProvider interface {
 	Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error)
+	GetID() string
 	GetDefaultModel() string
 	GetMaxTokens() int
 	GetTemperature() float64
@@ -33,6 +34,7 @@ const (
 	FailoverRateLimit  FailoverReason = "rate_limit"
 	FailoverBilling    FailoverReason = "billing"
 	FailoverTimeout    FailoverReason = "timeout"
+	FailoverTokenLimit FailoverReason = "token_limit"
 	FailoverFormat     FailoverReason = "format"
 	FailoverOverloaded FailoverReason = "overloaded"
 	FailoverUnknown    FailoverReason = "unknown"

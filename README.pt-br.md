@@ -62,6 +62,8 @@
 
 🪶 **Ultra-Leve**: Consumo de memória <10MB — 99% menor que o Clawdbot para funcionalidades essenciais.
 
+🧠 **Memória de Longo Prazo**: Integração opcional com Qdrant para arquivamento e recuperação de sessões, permitindo que o agente lembre de contextos passados.
+
 💰 **Custo Mínimo**: Eficiente o suficiente para rodar em hardware de $10 — 98% mais barato que um Mac mini.
 
 ⚡️ **Inicialização Relámpago**: Tempo de inicialização 400X mais rápido, boot em 1 segundo mesmo em CPU single-core de 0.6GHz.

@@ -35,6 +35,16 @@ var (
 		rxp(`"type"\s*:\s*"overloaded_error"`),
 		substr("overloaded"),
 	}
+ 
+	tokenLimitPatterns = []errorPattern{
+		substr("context_length_exceeded"),
+		substr("too many tokens"),
+		substr("maximum context length"),
+		substr("max_tokens"),
+		substr("token limit"),
+		rxp(`exceed.*tokens`),
+		rxp(`context.*too long`),
+	}
 
 	timeoutPatterns = []errorPattern{
 		substr("timeout"),
@@ -184,6 +194,9 @@ func classifyByMessage(msg string) FailoverReason {
 	}
 	if matchesAny(msg, billingPatterns) {
 		return FailoverBilling
+	}
+	if matchesAny(msg, tokenLimitPatterns) {
+		return FailoverTokenLimit
 	}
 	if matchesAny(msg, timeoutPatterns) {
 		return FailoverTimeout

@@ -61,13 +61,44 @@ type Config struct {
 	MCP        map[string]MCPServerConfig `json:"mcp"` // From HEAD
 	Heartbeat  HeartbeatConfig            `json:"heartbeat"`
 	Devices    DevicesConfig              `json:"devices"`
+	Memory     MemoryConfig               `json:"memory"`
+	Mailbox    MailboxConfig              `json:"mailbox"`
 	mu         sync.RWMutex
 }
 
+type MailboxConfig struct {
+	Path string `json:"path" env:"PICOCLAW_MAILBOX_PATH"`
+}
+
+type MemoryConfig struct {
+	Enabled   bool            `json:"enabled" env:"PICOCLAW_MEMORY_ENABLED"`
+	Provider  string          `json:"provider" env:"PICOCLAW_MEMORY_PROVIDER"` // e.g. "qdrant"
+	Qdrant    QdrantConfig    `json:"qdrant"`
+	Embedding EmbeddingConfig `json:"embedding"`
+}
+
+type QdrantConfig struct {
+	URL            string `json:"url" env:"PICOCLAW_MEMORY_QDRANT_URL"` // e.g. "http://192.168.0.70:6333"
+	CollectionName string `json:"collection_name" env:"PICOCLAW_MEMORY_QDRANT_COLLECTION_NAME"`
+	APIKey         string `json:"api_key" env:"PICOCLAW_MEMORY_QDRANT_API_KEY"`
+}
+
+type EmbeddingConfig struct {
+	Provider string `json:"provider" env:"PICOCLAW_MEMORY_EMBEDDING_PROVIDER"` // e.g. "openai", "ollama"
+	Model    string `json:"model" env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`       // e.g. "text-embedding-3-small"
+	BaseURL  string `json:"base_url,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_BASE_URL"`
+	APIKey   string `json:"api_key,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_API_KEY"`
+	Timeout   int    `json:"timeout,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_TIMEOUT"`     // seconds
+	ChunkSize int    `json:"chunk_size,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_CHUNK_SIZE"` // characters
+	KeepAlive string `json:"keep_alive,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_KEEP_ALIVE"` // e.g. "30m"
+	NumCtx    int    `json:"num_ctx,omitempty" env:"PICOCLAW_MEMORY_EMBEDDING_NUM_CTX"`       // e.g. 8192
+}
+
 type WorkspaceConfig struct {
-	Path                string              `json:"path" env:"PICOCLAW_WORKSPACES_{{.Name}}_PATH"`
-	Users               FlexibleStringSlice `json:"users" env:"PICOCLAW_WORKSPACES_{{.Name}}_USERS"`
-	RestrictToWorkspace *bool               `json:"restrict_to_workspace"`
+	Path                 string              `json:"path" env:"PICOCLAW_WORKSPACES_{{.Name}}_PATH"`
+	Users                FlexibleStringSlice `json:"users" env:"PICOCLAW_WORKSPACES_{{.Name}}_USERS"`
+	RestrictToWorkspace  *bool               `json:"restrict_to_workspace"`
+	AllowedExternalPaths []string            `json:"allowed_external_paths"`
 }
 
 type AgentsConfig struct {
@@ -751,6 +782,25 @@ func DefaultConfig() *Config {
 			Enabled:    false,
 			MonitorUSB: true,
 		},
+		Mailbox: MailboxConfig{
+			Path: "~/.picoclaw/mailbox",
+		},
+		Memory: MemoryConfig{
+			Enabled:  false,
+			Provider: "qdrant",
+			Qdrant: QdrantConfig{
+				URL:            "http://localhost:6333",
+				CollectionName: "picoclaw",
+			},
+			Embedding: EmbeddingConfig{
+				Provider: "openai",
+				Model:    "text-embedding-3-small",
+				Timeout:   120,
+				ChunkSize: 4096,
+				KeepAlive: "30m",
+				NumCtx:    8192,
+			},
+		},
 	}
 }
 
@@ -817,6 +867,37 @@ func (c *Config) ResolveWorkspace(senderID string) string {
 	}
 	// TODO: Implement proper user->workspace mapping
 	return c.WorkspacePath()
+}
+
+func (c *Config) ResolveWorkspaceName(path string) string {
+	path = ExpandHome(path)
+	for name, ws := range c.Workspaces {
+		if ExpandHome(ws.Path) == path {
+			return name
+		}
+	}
+	if path == ExpandHome(c.Agents.Defaults.Workspace) {
+		return "default"
+	}
+	return filepath.Base(path)
+}
+
+func (c *Config) GetWorkspaceNames() []string {
+	names := []string{"default"}
+	for name := range c.Workspaces {
+		if name != "default" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func (c *Config) ResolveMailboxPath() string {
+	if c.Mailbox.Path != "" {
+		return ExpandHome(c.Mailbox.Path)
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".picoclaw", "mailbox")
 }
 
 func (c *Config) ResolveRestrictToWorkspace(senderID string) bool {

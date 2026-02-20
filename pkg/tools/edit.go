@@ -10,15 +10,17 @@ import (
 // EditFileTool edits a file by replacing old_text with new_text.
 // The old_text must exist exactly in the file.
 type EditFileTool struct {
-	allowedDir string
-	restrict   bool
+	allowedDir   string
+	allowedPaths []string
+	restrict     bool
 }
 
 // NewEditFileTool creates a new EditFileTool with optional directory restriction.
-func NewEditFileTool(allowedDir string, restrict bool) *EditFileTool {
+func NewEditFileTool(allowedDir string, allowedPaths []string, restrict bool) *EditFileTool {
 	return &EditFileTool{
-		allowedDir: allowedDir,
-		restrict:   restrict,
+		allowedDir:   allowedDir,
+		allowedPaths: allowedPaths,
+		restrict:     restrict,
 	}
 }
 
@@ -67,7 +69,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]interface{})
 		return ErrorResult("new_text is required")
 	}
 
-	resolvedPath, err := validatePath(path, t.allowedDir, t.restrict)
+	resolvedPath, err := validatePath(path, t.allowedDir, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}
@@ -102,12 +104,13 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]interface{})
 }
 
 type AppendFileTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewAppendFileTool(workspace string, restrict bool) *AppendFileTool {
-	return &AppendFileTool{workspace: workspace, restrict: restrict}
+func NewAppendFileTool(workspace string, allowedPaths []string, restrict bool) *AppendFileTool {
+	return &AppendFileTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *AppendFileTool) Name() string {
@@ -146,7 +149,7 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]interface{
 		return ErrorResult("content is required")
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}

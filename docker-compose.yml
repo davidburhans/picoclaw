@@ -11,9 +11,8 @@ services:
     profiles:
       - agent
     volumes:
-    volumes:
       - ./config/config.json:/home/picoclaw/.picoclaw/config.json:ro
-      - ./.burhandler:/home/picoclaw/.picoclaw/workspace
+      - ./.dave:/home/picoclaw/.picoclaw/workspace
       - ./mcp:/mcp:ro
     entrypoint: ["picoclaw", "agent"]
     stdin_open: true

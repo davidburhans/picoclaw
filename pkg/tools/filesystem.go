@@ -3,13 +3,16 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
 
-// validatePath ensures the given path is within the workspace if restrict is true.
-func validatePath(path, workspace string, restrict bool) (string, error) {
+// validatePath ensures the given path is within the workspace or allowed external paths if restrict is true.
+func validatePath(path, workspace string, allowedExternalPaths []string, restrict bool) (string, error) {
 	if workspace == "" {
 		return path, nil
 	}
@@ -30,8 +33,21 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 	}
 
 	if restrict {
-		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", fmt.Errorf("access denied: path is outside the workspace")
+		// Check if it's within workspace or any allowed external path
+		isAllowed := isWithinWorkspace(absPath, absWorkspace)
+		if !isAllowed {
+			for _, p := range allowedExternalPaths {
+				if absP, err := filepath.Abs(config.ExpandHome(p)); err == nil {
+					if isWithinWorkspace(absPath, absP) {
+						isAllowed = true
+						break
+					}
+				}
+			}
+		}
+
+		if !isAllowed {
+			return "", fmt.Errorf("access denied: path is outside the workspace and allowed external paths")
 		}
 
 		workspaceReal := absWorkspace
@@ -39,14 +55,43 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 			workspaceReal = resolved
 		}
 
+		allowedReals := make([]string, 0, len(allowedExternalPaths))
+		for _, p := range allowedExternalPaths {
+			if absP, err := filepath.Abs(config.ExpandHome(p)); err == nil {
+				if resolved, err := filepath.EvalSymlinks(absP); err == nil {
+					allowedReals = append(allowedReals, resolved)
+				} else {
+					allowedReals = append(allowedReals, absP)
+				}
+			}
+		}
+
 		if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
-			if !isWithinWorkspace(resolved, workspaceReal) {
-				return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+			isAllowed = isWithinWorkspace(resolved, workspaceReal)
+			if !isAllowed {
+				for _, r := range allowedReals {
+					if isWithinWorkspace(resolved, r) {
+						isAllowed = true
+						break
+					}
+				}
+			}
+			if !isAllowed {
+				return "", fmt.Errorf("access denied: symlink resolves outside workspace and allowed external paths")
 			}
 		} else if os.IsNotExist(err) {
 			if parentResolved, err := resolveExistingAncestor(filepath.Dir(absPath)); err == nil {
-				if !isWithinWorkspace(parentResolved, workspaceReal) {
-					return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+				isAllowed = isWithinWorkspace(parentResolved, workspaceReal)
+				if !isAllowed {
+					for _, r := range allowedReals {
+						if isWithinWorkspace(parentResolved, r) {
+							isAllowed = true
+							break
+						}
+					}
+				}
+				if !isAllowed {
+					return "", fmt.Errorf("access denied: symlink resolves outside workspace and allowed external paths")
 				}
 			} else if !os.IsNotExist(err) {
 				return "", fmt.Errorf("failed to resolve path: %w", err)
@@ -78,12 +123,13 @@ func isWithinWorkspace(candidate, workspace string) bool {
 }
 
 type ReadFileTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewReadFileTool(workspace string, restrict bool) *ReadFileTool {
-	return &ReadFileTool{workspace: workspace, restrict: restrict}
+func NewReadFileTool(workspace string, allowedPaths []string, restrict bool) *ReadFileTool {
+	return &ReadFileTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *ReadFileTool) Name() string {
@@ -91,7 +137,7 @@ func (t *ReadFileTool) Name() string {
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read the contents of a file"
+	return "Read the contents of a file with optional paging and truncation"
 }
 
 func (t *ReadFileTool) Parameters() map[string]interface{} {
@@ -101,6 +147,14 @@ func (t *ReadFileTool) Parameters() map[string]interface{} {
 			"path": map[string]interface{}{
 				"type":        "string",
 				"description": "Path to the file to read",
+			},
+			"max_bytes": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum number of bytes to read (default: 5000). Use to avoid consuming too much context.",
+			},
+			"offset": map[string]interface{}{
+				"type":        "integer",
+				"description": "The byte offset to start reading from (default: 0). Use for paging through large files.",
 			},
 		},
 		"required": []string{"path"},
@@ -113,26 +167,79 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]interface{})
 		return ErrorResult("path is required")
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	maxBytes := int64(5000)
+	if mb, ok := args["max_bytes"]; ok {
+		switch v := mb.(type) {
+		case int:
+			maxBytes = int64(v)
+		case int64:
+			maxBytes = v
+		case float64:
+			maxBytes = int64(v)
+		}
+	}
+
+	offset := int64(0)
+	if off, ok := args["offset"]; ok {
+		switch v := off.(type) {
+		case int:
+			offset = int64(v)
+		case int64:
+			offset = v
+		case float64:
+			offset = int64(v)
+		}
+	}
+
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}
 
-	content, err := os.ReadFile(resolvedPath)
+	f, err := os.Open(resolvedPath)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to read file: %v", err))
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to stat file: %v", err))
+	}
+
+	totalSize := info.Size()
+	if offset > totalSize {
+		return ErrorResult(fmt.Sprintf("offset %d is beyond file size %d", offset, totalSize))
+	}
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return ErrorResult(fmt.Sprintf("failed to seek to offset %d: %v", offset, err))
+	}
+
+	lr := io.LimitReader(f, maxBytes)
+	content, err := io.ReadAll(lr)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to read file: %v", err))
 	}
 
-	return NewToolResult(string(content))
+	bytesRead := int64(len(content))
+	result := string(content)
+
+	if totalSize > offset+bytesRead {
+		result += fmt.Sprintf("\n\n[TRUNCATED: showing bytes %d-%d of %d total. Use the 'offset' parameter to read more.]", offset, offset+bytesRead, totalSize)
+	}
+
+	return NewToolResult(result)
 }
 
 type WriteFileTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewWriteFileTool(workspace string, restrict bool) *WriteFileTool {
-	return &WriteFileTool{workspace: workspace, restrict: restrict}
+func NewWriteFileTool(workspace string, allowedPaths []string, restrict bool) *WriteFileTool {
+	return &WriteFileTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -171,7 +278,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]interface{}
 		return ErrorResult("content is required")
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}
@@ -189,12 +296,13 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]interface{}
 }
 
 type ListDirTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewListDirTool(workspace string, restrict bool) *ListDirTool {
-	return &ListDirTool{workspace: workspace, restrict: restrict}
+func NewListDirTool(workspace string, allowedPaths []string, restrict bool) *ListDirTool {
+	return &ListDirTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *ListDirTool) Name() string {
@@ -224,7 +332,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]interface{}) 
 		path = "."
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}

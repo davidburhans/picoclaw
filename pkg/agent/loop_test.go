@@ -49,6 +49,10 @@ func (m *testMockProvider) GetMaxConcurrent() int {
 	return 1
 }
 
+func (m *testMockProvider) GetID() string {
+	return "mock-id"
+}
+
 func TestRecordLastChannel(t *testing.T) {
 	// Create temp workspace
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
@@ -416,6 +420,10 @@ func (m *simpleMockProvider) GetMaxConcurrent() int {
 	return 1
 }
 
+func (m *simpleMockProvider) GetID() string {
+	return "simple-mock-id"
+}
+
 // mockCustomTool is a simple mock tool for registration testing
 type mockCustomTool struct{}
 
@@ -612,6 +620,10 @@ func (m *failFirstMockProvider) GetTimeout() int {
 
 func (m *failFirstMockProvider) GetMaxConcurrent() int {
 	return 1
+}
+
+func (m *failFirstMockProvider) GetID() string {
+	return "fail-mock-id"
 }
 
 // TestAgentLoop_ContextExhaustionRetry verify that the agent retries on context errors

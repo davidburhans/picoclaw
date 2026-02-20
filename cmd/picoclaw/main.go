@@ -355,7 +355,11 @@ You are a helpful AI assistant. Be concise, accurate, and friendly.
 - Use tools to help accomplish tasks
 - Remember important information in your memory files
 - Be proactive and helpful
-- Learn from user feedback
+- Learn from user 
+- Clean up after yourself
+- Keep your internal files organized and to the point.
+- Try to break tasks into smaller tasks and use subagents to help accomplish them in parallel
+- When spawning sub-agents, remember to use a role associated with a skill for maximum effectiveness in more complex tasks. You can always spawn a ` + "`skill-creator`" + ` sub-agent to create the skill that is missing to help with the sub-agent's task
 `,
 		"SOUL.md": fmt.Sprintf(`# Soul
 
@@ -787,7 +791,14 @@ func gatewayCmd() {
 		if cfg.Agents.Defaults.RestrictToWorkspace != nil {
 			restrict = *cfg.Agents.Defaults.RestrictToWorkspace
 		}
-		cs := setupCronTool(agentLoop, msgBus, wsPath, restrict, execTimeout, cfg)
+		var allowedPaths []string
+		for _, ws := range cfg.Workspaces {
+			if config.ExpandHome(ws.Path) == wsPath {
+				allowedPaths = ws.AllowedExternalPaths
+				break
+			}
+		}
+		cs := setupCronTool(agentLoop, msgBus, wsPath, allowedPaths, restrict, execTimeout, cfg)
 		cronServices = append(cronServices, cs)
 
 		// 2. Setup heartbeat service
@@ -1286,14 +1297,14 @@ func expandHome(path string) string {
 	return path
 }
 
-func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration, config *config.Config) *cron.CronService {
+func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, allowedPaths []string, restrict bool, execTimeout time.Duration, config *config.Config) *cron.CronService {
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 
 	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, config)
+	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, allowedPaths, restrict, execTimeout, config)
 	agentLoop.RegisterTool(cronTool)
 
 	// Set the onJob handler

@@ -1,7 +1,6 @@
 package voice
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -62,40 +61,40 @@ func (t *GroqTranscriber) Transcribe(ctx context.Context, audioFilePath string) 
 		"file_name":  filepath.Base(audioFilePath),
 	})
 
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
 
-	part, err := writer.CreateFormFile("file", filepath.Base(audioFilePath))
-	if err != nil {
-		logger.ErrorCF("voice", "Failed to create form file", map[string]interface{}{"error": err})
-		return nil, fmt.Errorf("failed to create form file: %w", err)
-	}
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
 
-	copied, err := io.Copy(part, audioFile)
-	if err != nil {
-		logger.ErrorCF("voice", "Failed to copy file content", map[string]interface{}{"error": err})
-		return nil, fmt.Errorf("failed to copy file content: %w", err)
-	}
+		part, err := writer.CreateFormFile("file", filepath.Base(audioFilePath))
+		if err != nil {
+			logger.ErrorCF("voice", "Failed to create form file", map[string]interface{}{"error": err.Error()})
+			return
+		}
 
-	logger.DebugCF("voice", "File copied to request", map[string]interface{}{"bytes_copied": copied})
+		copied, err := io.Copy(part, audioFile)
+		if err != nil {
+			logger.ErrorCF("voice", "Failed to copy file content", map[string]interface{}{"error": err.Error()})
+			return
+		}
 
-	if err := writer.WriteField("model", "whisper-large-v3"); err != nil {
-		logger.ErrorCF("voice", "Failed to write model field", map[string]interface{}{"error": err})
-		return nil, fmt.Errorf("failed to write model field: %w", err)
-	}
+		logger.DebugCF("voice", "File streamed to request", map[string]interface{}{"bytes_copied": copied})
 
-	if err := writer.WriteField("response_format", "json"); err != nil {
-		logger.ErrorCF("voice", "Failed to write response_format field", map[string]interface{}{"error": err})
-		return nil, fmt.Errorf("failed to write response_format field: %w", err)
-	}
+		if err := writer.WriteField("model", "whisper-large-v3"); err != nil {
+			logger.ErrorCF("voice", "Failed to write model field", map[string]interface{}{"error": err.Error()})
+			return
+		}
 
-	if err := writer.Close(); err != nil {
-		logger.ErrorCF("voice", "Failed to close multipart writer", map[string]interface{}{"error": err})
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
-	}
+		if err := writer.WriteField("response_format", "json"); err != nil {
+			logger.ErrorCF("voice", "Failed to write response_format field", map[string]interface{}{"error": err.Error()})
+			return
+		}
+	}()
 
 	url := t.apiBase + "/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &requestBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
 	if err != nil {
 		logger.ErrorCF("voice", "Failed to create request", map[string]interface{}{"error": err})
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -105,9 +104,8 @@ func (t *GroqTranscriber) Transcribe(ctx context.Context, audioFilePath string) 
 	req.Header.Set("Authorization", "Bearer "+t.apiKey)
 
 	logger.DebugCF("voice", "Sending transcription request to Groq API", map[string]interface{}{
-		"url":                url,
-		"request_size_bytes": requestBody.Len(),
-		"file_size_bytes":    fileInfo.Size(),
+		"url":             url,
+		"file_size_bytes": fileInfo.Size(),
 	})
 
 	resp, err := t.httpClient.Do(req)

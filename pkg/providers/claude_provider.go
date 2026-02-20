@@ -7,69 +7,73 @@ import (
 	"github.com/sipeed/picoclaw/pkg/auth"
 	anthropicprovider "github.com/sipeed/picoclaw/pkg/providers/anthropic"
 )
-
+ 
 type ClaudeProvider struct {
-	delegate *anthropicprovider.Provider
+ 	delegate *anthropicprovider.Provider
 }
-
+ 
 func NewClaudeProvider(token string) *ClaudeProvider {
-	return &ClaudeProvider{
-		delegate: anthropicprovider.NewProvider(token),
-	}
+ 	return &ClaudeProvider{
+ 		delegate: anthropicprovider.NewProvider(token),
+ 	}
 }
-
+ 
 func NewClaudeProviderWithBaseURL(token, apiBase string) *ClaudeProvider {
-	return &ClaudeProvider{
-		delegate: anthropicprovider.NewProviderWithBaseURL(token, apiBase),
-	}
+ 	return &ClaudeProvider{
+ 		delegate: anthropicprovider.NewProviderWithBaseURL(token, apiBase),
+ 	}
 }
-
+ 
 func NewClaudeProviderWithTokenSource(token string, tokenSource func() (string, error)) *ClaudeProvider {
-	return &ClaudeProvider{
-		delegate: anthropicprovider.NewProviderWithTokenSource(token, tokenSource),
-	}
+ 	return &ClaudeProvider{
+ 		delegate: anthropicprovider.NewProviderWithTokenSource(token, tokenSource),
+ 	}
 }
-
+ 
 func NewClaudeProviderWithTokenSourceAndBaseURL(token string, tokenSource func() (string, error), apiBase string) *ClaudeProvider {
-	return &ClaudeProvider{
-		delegate: anthropicprovider.NewProviderWithTokenSourceAndBaseURL(token, tokenSource, apiBase),
-	}
+ 	return &ClaudeProvider{
+ 		delegate: anthropicprovider.NewProviderWithTokenSourceAndBaseURL(token, tokenSource, apiBase),
+ 	}
 }
-
+ 
 func newClaudeProviderWithDelegate(delegate *anthropicprovider.Provider) *ClaudeProvider {
-	return &ClaudeProvider{delegate: delegate}
+ 	return &ClaudeProvider{delegate: delegate}
 }
-
+ 
 func (p *ClaudeProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
-	resp, err := p.delegate.Chat(ctx, messages, tools, model, options)
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
+ 	resp, err := p.delegate.Chat(ctx, messages, tools, model, options)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	return resp, nil
 }
-
+ 
+func (p *ClaudeProvider) GetID() string {
+ 	return "claude-auth"
+}
+ 
 func (p *ClaudeProvider) GetDefaultModel() string {
-	return p.delegate.GetDefaultModel()
+ 	return p.delegate.GetDefaultModel()
 }
-
+ 
 func (p *ClaudeProvider) GetMaxTokens() int {
-	return 4096
+ 	return 4096
 }
-
+ 
 func (p *ClaudeProvider) GetTemperature() float64 {
-	return 1.0
+ 	return 1.0
 }
-
+ 
 func (p *ClaudeProvider) GetMaxToolIterations() int {
-	return 20
+ 	return 20
 }
-
+ 
 func (p *ClaudeProvider) GetTimeout() int {
-	return 120
+ 	return 300
 }
-
+ 
 func (p *ClaudeProvider) GetMaxConcurrent() int {
-	return 1
+ 	return 1
 }
 
 func createClaudeTokenSource() func() (string, error) {
@@ -81,6 +85,8 @@ func createClaudeTokenSource() func() (string, error) {
 		if cred == nil {
 			return "", fmt.Errorf("no credentials for anthropic. Run: picoclaw auth login --provider anthropic")
 		}
+		
+		// TODO: Refresh logic if needed
 		return cred.AccessToken, nil
 	}
 }

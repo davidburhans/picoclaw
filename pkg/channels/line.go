@@ -377,7 +377,8 @@ func (c *LINEChannel) processEvent(event lineEvent) {
 	// Show typing/loading indicator (requires user ID, not group ID)
 	c.sendLoading(senderID)
 
-	c.HandleMessage(senderID, chatID, content, mediaPaths, metadata)
+	sessionKey := fmt.Sprintf("line:%s", chatID)
+	c.HandleMessage(senderID, chatID, sessionKey, content, mediaPaths, metadata)
 }
 
 // isBotMentioned checks if the bot is mentioned in the message.

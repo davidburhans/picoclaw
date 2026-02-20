@@ -164,6 +164,14 @@ func (p *ScheduleProvider) Chat(ctx context.Context, messages []Message, tools [
 	return provider.Chat(ctx, messages, tools, targetModel, options)
 }
 
+func (p *ScheduleProvider) GetID() string {
+	provider, _, err := p.resolveProvider(p.nowFunc())
+	if err != nil || provider == nil {
+		return "schedule:" + p.schedule.Default.Provider
+	}
+	return provider.GetID()
+}
+
 func (p *ScheduleProvider) GetDefaultModel() string {
 	provider, model, err := p.resolveProvider(p.nowFunc())
 	if err != nil || provider == nil {

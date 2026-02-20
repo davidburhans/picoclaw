@@ -11,6 +11,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
 type SubagentTask struct {
@@ -34,15 +35,17 @@ type SubagentManager struct {
 	defaultModel  string
 	bus           *bus.MessageBus
 	workspace     string
+	allowedPaths  []string
 	tools         *ToolRegistry
 	maxIterations int
 	maxDepth      int
 	maxTokens     int
 	temperature   float64
 	nextID        int
+	skillsLoader  *skills.SkillsLoader
 }
 
-func NewSubagentManager(provider providers.LLMProvider, defaultModel, workspace string, bus *bus.MessageBus) *SubagentManager {
+func NewSubagentManager(provider providers.LLMProvider, defaultModel, workspace string, allowedPaths []string, bus *bus.MessageBus) *SubagentManager {
 	cleanWS, _ := filepath.Abs(workspace)
 	return &SubagentManager{
 		tasks:         make(map[string]*SubagentTask),
@@ -50,6 +53,7 @@ func NewSubagentManager(provider providers.LLMProvider, defaultModel, workspace 
 		defaultModel:  defaultModel,
 		bus:           bus,
 		workspace:     cleanWS,
+		allowedPaths:  allowedPaths,
 		tools:         NewToolRegistry(),
 		maxIterations: 10,
 		maxDepth:      5,
@@ -109,6 +113,14 @@ func (sm *SubagentManager) SetTools(tools *ToolRegistry) {
 	sm.tools = tools
 }
 
+// SetSkillsLoader wires the skill registry into the sub-agent manager so that
+// roles can be resolved against installed skills.
+func (sm *SubagentManager) SetSkillsLoader(loader *skills.SkillsLoader) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.skillsLoader = loader
+}
+
 // RegisterTool registers a tool for subagent execution.
 func (sm *SubagentManager) RegisterTool(tool Tool) {
 	sm.mu.Lock()
@@ -157,8 +169,12 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, role
 	task.Status = "running"
 	task.Created = time.Now().UnixMilli()
 
+	sm.mu.RLock()
+	loader := sm.skillsLoader
+	sm.mu.RUnlock()
+
 	// Build system prompt for subagent
-	systemPrompt := buildSubagentPrompt(role, task.Task)
+	systemPrompt, skillMatched := buildSubagentPrompt(role, task.Task, loader)
 
 	// Inject context files
 	initialMessage := task.Task
@@ -237,8 +253,12 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, role
 	} else {
 		task.Status = "completed"
 		task.Result = loopResult.Content
+		llmContent := fmt.Sprintf("Subagent '%s' completed (iterations: %d): %s", task.Label, loopResult.Iterations, loopResult.Content)
+		if role != "" && !skillMatched {
+			llmContent += fmt.Sprintf("\n\nNote: No skill matched role '%s'. Consider creating one with the skill-creator to improve future sub-agent performance for this role.", role)
+		}
 		result = &ToolResult{
-			ForLLM:  fmt.Sprintf("Subagent '%s' completed (iterations: %d): %s", task.Label, loopResult.Iterations, loopResult.Content),
+			ForLLM:  llmContent,
 			ForUser: loopResult.Content,
 			Silent:  false,
 			IsError: false,
@@ -285,16 +305,18 @@ type SubagentTool struct {
 	originChannel string
 	originChatID  string
 	workspace     string
+	allowedPaths  []string
 	restrict      bool
 	mu            sync.RWMutex
 }
 
-func NewSubagentTool(manager *SubagentManager, workspace string, restrict bool) *SubagentTool {
+func NewSubagentTool(manager *SubagentManager, workspace string, allowedPaths []string, restrict bool) *SubagentTool {
 	return &SubagentTool{
 		manager:       manager,
 		originChannel: "cli",
 		originChatID:  "direct",
 		workspace:     workspace,
+		allowedPaths:  allowedPaths,
 		restrict:      restrict,
 	}
 }
@@ -304,7 +326,7 @@ func (t *SubagentTool) Name() string {
 }
 
 func (t *SubagentTool) Description() string {
-	return "Execute a subagent task synchronously and return the result. Use this for delegating specific tasks to an independent agent instance. Returns execution summary to user and full details to LLM."
+	return "Execute a subagent task synchronously and return the result. Use this for delegating specific tasks to an independent agent instance. If the role matches an installed skill, the sub-agent is initialized with that skill's knowledge. Returns execution summary to user and full details to LLM."
 }
 
 func (t *SubagentTool) Parameters() map[string]interface{} {
@@ -321,7 +343,7 @@ func (t *SubagentTool) Parameters() map[string]interface{} {
 			},
 			"role": map[string]interface{}{
 				"type":        "string",
-				"description": "The persona for the sub-agent, e.g. 'Senior Go Engineer', 'Security Auditor'. Shapes behavior.",
+				"description": "The role for the sub-agent. If this matches an installed skill name (e.g. 'summarize', 'skill-creator'), the sub-agent is initialized with that skill's knowledge and a listing of its available resources. Otherwise it is used as a free-text persona (e.g. 'Senior Go Engineer'). Check the <skills> block in your context before choosing a role.",
 			},
 			"context_files": map[string]interface{}{
 				"type":        "array",
@@ -375,7 +397,10 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	ctx = withSubagentDepth(ctx, currentDepth+1)
 
 	// Build subagent prompt
-	systemPrompt := buildSubagentPrompt(role, task)
+	t.manager.mu.RLock()
+	loader := t.manager.skillsLoader
+	t.manager.mu.RUnlock()
+	systemPrompt, skillMatched := buildSubagentPrompt(role, task, loader)
 
 	// Inject context files
 	initialMessage := task
@@ -439,6 +464,9 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 	llmContent := fmt.Sprintf("Subagent task completed:\nLabel: %s\nIterations: %d\nResult: %s",
 		labelStr, loopResult.Iterations, loopResult.Content)
+	if role != "" && !skillMatched {
+		llmContent += fmt.Sprintf("\n\nNote: No skill matched role '%s'. Consider creating one with the skill-creator to improve future sub-agent performance for this role.", role)
+	}
 
 	return &ToolResult{
 		ForLLM:  llmContent,
@@ -449,11 +477,26 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 }
 
-func buildSubagentPrompt(role, goal string) string {
+// buildSubagentPrompt constructs the system prompt for a sub-agent.
+// If loader is non-nil and the role matches an installed skill (exact match
+// first, then case-insensitive), the SKILL.md body and resource file listing
+// are injected so the agent has full procedural context from the start.
+// Returns the prompt and a bool indicating whether a skill was matched.
+func buildSubagentPrompt(role, goal string, loader *skills.SkillsLoader) (string, bool) {
 	if role == "" {
 		role = "a capable worker"
 	}
-	return fmt.Sprintf(`You are a specialized sub-agent.
+
+	// Attempt skill lookup when a loader is available
+	if loader != nil && role != "a capable worker" {
+		skillMatched, prompt := tryBuildSkillPrompt(loader, role, goal)
+		if skillMatched {
+			return prompt, true
+		}
+	}
+
+	// Fallback: free-text role
+	prompt := fmt.Sprintf(`You are a specialized sub-agent.
 ROLE: %s
 OBJECTIVE: %s
 
@@ -462,6 +505,77 @@ RULES:
 2. Execute autonomously. Do NOT ask for clarification.
 3. When finished, call the 'report_completion' tool with your final summary.
 4. Stay focused on the objective.`, role, goal)
+	return prompt, false
+}
+
+// tryBuildSkillPrompt attempts to match the role to an installed skill and
+// build a skill-enriched system prompt. Returns (true, prompt) on match.
+func tryBuildSkillPrompt(loader *skills.SkillsLoader, role, goal string) (bool, string) {
+	allSkills := loader.ListSkills()
+
+	// Exact match first, then case-insensitive
+	var matched *skills.SkillInfo
+	roleLower := strings.ToLower(role)
+	for i := range allSkills {
+		if allSkills[i].Name == role {
+			s := allSkills[i]
+			matched = &s
+			break
+		}
+	}
+	if matched == nil {
+		for i := range allSkills {
+			if strings.ToLower(allSkills[i].Name) == roleLower {
+				s := allSkills[i]
+				matched = &s
+				break
+			}
+		}
+	}
+	if matched == nil {
+		return false, ""
+	}
+
+	// Load SKILL.md body (frontmatter already stripped by LoadSkill)
+	skillBody, ok := loader.LoadSkill(matched.Name)
+	if !ok {
+		return false, ""
+	}
+
+	// Build resource file listing
+	var resourceSection string
+	if skillDir, ok := loader.GetSkillDir(matched.Name); ok {
+		if files, err := loader.ListSkillFiles(skillDir); err == nil && len(files) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n\n## Available Skill Resources\n")
+			sb.WriteString(fmt.Sprintf("The following files are available in the skill directory (%s):\n", skillDir))
+			for _, f := range files {
+				sb.WriteString(fmt.Sprintf("  - %s\n", filepath.ToSlash(f)))
+			}
+			sb.WriteString("\nUse the read_file or exec tools to access these resources as needed.")
+			resourceSection = sb.String()
+		}
+	}
+
+	prompt := fmt.Sprintf(`You are a specialized sub-agent operating with the '%s' skill.
+
+## Skill Knowledge
+
+%s%s
+
+## Objective
+
+%s
+
+## Rules
+
+1. You have access to tools — use them as needed.
+2. Execute autonomously. Do NOT ask for clarification.
+3. When finished, call the 'report_completion' tool with your final summary.
+4. Stay focused on the objective.`,
+		matched.Name, skillBody, resourceSection, goal)
+
+	return true, prompt
 }
 
 func (sm *SubagentManager) injectContextFiles(task string, files []string) string {
@@ -470,7 +584,7 @@ func (sm *SubagentManager) injectContextFiles(task string, files []string) strin
 	sb.WriteString("\n\n--- Context Files ---\n")
 	for _, f := range files {
 		// Use the unified validatePath check
-		absPath, err := validatePath(f, sm.workspace, true)
+		absPath, err := validatePath(f, sm.workspace, sm.allowedPaths, true)
 		if err != nil {
 			sb.WriteString(fmt.Sprintf("\n[%s]: (error: %v)\n", f, err))
 			continue

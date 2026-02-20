@@ -924,7 +924,8 @@ func (c *OneBotChannel) handleMessage(raw *oneBotRawEvent) {
 		c.pendingEmojiMsg.Store(chatID, messageID)
 	}
 
-	c.HandleMessage(senderID, chatID, content, parsed.Media, metadata)
+	sessionKey := fmt.Sprintf("onebot:%s", chatID)
+	c.HandleMessage(senderID, chatID, sessionKey, content, parsed.Media, metadata)
 }
 
 func (c *OneBotChannel) isDuplicate(messageID string) bool {

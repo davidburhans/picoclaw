@@ -30,9 +30,13 @@ func TestCreateProvider_MultiInstance(t *testing.T) {
 			t.Fatalf("CreateProvider failed: %v", err)
 		}
 
-		hp, ok := p.(*HTTPProvider)
+		tempProvider := p
+		if cw, ok := p.(*ConcurrencyWrapper); ok {
+			tempProvider = cw.LLMProvider
+		}
+		hp, ok := tempProvider.(*HTTPProvider)
 		if !ok {
-			t.Fatal("Expected HTTPProvider")
+			t.Fatalf("Expected HTTPProvider, got %T", p)
 		}
 
 		if hp.apiBase != "http://localhost:1234/v1" {
@@ -49,9 +53,13 @@ func TestCreateProvider_MultiInstance(t *testing.T) {
 			t.Fatalf("CreateProvider failed: %v", err)
 		}
 
-		hp, ok := p.(*HTTPProvider)
+		tempProvider := p
+		if cw, ok := p.(*ConcurrencyWrapper); ok {
+			tempProvider = cw.LLMProvider
+		}
+		hp, ok := tempProvider.(*HTTPProvider)
 		if !ok {
-			t.Fatal("Expected HTTPProvider")
+			t.Fatalf("Expected HTTPProvider, got %T", p)
 		}
 
 		if hp.apiBase != "http://localhost:11434/v1" {
@@ -68,9 +76,13 @@ func TestCreateProvider_MultiInstance(t *testing.T) {
 			t.Fatalf("CreateProvider failed: %v", err)
 		}
 
-		hp, ok := p.(*HTTPProvider)
+		tempProvider := p
+		if cw, ok := p.(*ConcurrencyWrapper); ok {
+			tempProvider = cw.LLMProvider
+		}
+		hp, ok := tempProvider.(*HTTPProvider)
 		if !ok {
-			t.Fatal("Expected HTTPProvider")
+			t.Fatalf("Expected HTTPProvider, got %T", p)
 		}
 
 		if hp.apiBase != "http://localhost:11434/v1" {
@@ -99,9 +111,13 @@ func TestCreateProvider_LegacyCompatibility(t *testing.T) {
 			t.Fatalf("CreateProvider failed: %v", err)
 		}
 
-		hp, ok := p.(*HTTPProvider)
+		tempProvider := p
+		if cw, ok := p.(*ConcurrencyWrapper); ok {
+			tempProvider = cw.LLMProvider
+		}
+		hp, ok := tempProvider.(*HTTPProvider)
 		if !ok {
-			t.Fatal("Expected HTTPProvider")
+			t.Fatalf("Expected HTTPProvider, got %T", p)
 		}
 
 		if hp.apiKey != "sk-legacy-key" {

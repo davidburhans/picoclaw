@@ -63,6 +63,8 @@
 
 👥 **多用户隔离**: 单个实例支持多个用户，拥有完全隔离的工作区、对话历史和定时任务。
 
+🧠 **长期记忆**: 可选的 Qdrant 集成，用于会话归档和检索，让代理能够记住过去的上下文。
+
 💰 **极低成本**: 高效到足以在 10 美元的硬件上运行 — 比 Mac mini 便宜 98%。
 
 ⚡️ **闪电启动**: 启动速度快 400 倍，即使在 0.6GHz 单核处理器上也能在 1 秒内启动。
@@ -451,7 +453,8 @@ picoclaw gateway
     "dave": {
       "path": "~/.picoclaw/workspace_dave",
       "users": ["discord_id_1", "telegram_id_A"],
-      "restrict_to_workspace": true
+      "restrict_to_workspace": true,
+      "allowed_external_paths": ["/data/assets", "~/shared"]
     },
     "wife": {
       "path": "~/.picoclaw/workspace_wife",

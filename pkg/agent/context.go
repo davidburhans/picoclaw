@@ -270,8 +270,8 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		last := &sanitized[len(sanitized)-1]
 
 		// Role alternation logic
-		if m.Role == last.Role {
-			// Merge consecutive roles (except system, which shouldn't happen here but handle anyway)
+		if m.Role == last.Role && m.Role != "tool" {
+			// Merge consecutive roles (except system and tool)
 			if m.Role != "system" {
 				if last.Content != "" && m.Content != "" {
 					last.Content += "\n\n" + m.Content
@@ -288,8 +288,23 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		}
 
 		// Handle Tool message requirements: must follow assistant message with tool calls
+		// OR follow another tool message that eventually follows an assistant message with tool calls
 		if m.Role == "tool" {
-			if last.Role != "assistant" || len(last.ToolCalls) == 0 {
+			// Find the nearest preceding non-tool message
+			foundAssistant := false
+			for j := len(sanitized) - 1; j >= 0; j-- {
+				if sanitized[j].Role == "assistant" {
+					if len(sanitized[j].ToolCalls) > 0 {
+						foundAssistant = true
+					}
+					break
+				}
+				if sanitized[j].Role != "tool" {
+					break // Hit something else (user/system) before assistant
+				}
+			}
+
+			if !foundAssistant {
 				logger.WarnCF("agent", "Removing orphaned tool message from prompt", map[string]interface{}{"tool_call_id": m.ToolCallID})
 				continue
 			}
@@ -351,4 +366,10 @@ func (cb *ContextBuilder) GetSkillsInfo() map[string]interface{} {
 		"available": len(allSkills),
 		"names":     skillNames,
 	}
+}
+
+// GetSkillsLoader returns the SkillsLoader so it can be shared with the
+// sub-agent manager without duplicating construction logic.
+func (cb *ContextBuilder) GetSkillsLoader() *skills.SkillsLoader {
+	return cb.skillsLoader
 }

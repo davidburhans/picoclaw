@@ -26,7 +26,8 @@
     "two": {
       "path": "~/.picoclaw/workspace_two",
       "users": ["discord_id_two"],
-      "restrict_to_workspace": true
+      "restrict_to_workspace": true,
+      "allowed_external_paths": ["/tmp/shared", "C:/data/assets"]
     }
   },
   "channels": {
@@ -233,6 +234,22 @@
   "devices": {
     "enabled": false,
     "monitor_usb": true
+  },
+  "memory": {
+    "enabled": false,
+    "provider": "qdrant",
+    "qdrant": {
+      "url": "http://localhost:6333",
+      "collection_name": "picoclaw",
+      "api_key": ""
+    },
+    "embedding": {
+      "provider": "openai",
+      "model": "text-embedding-3-small",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "YOUR_OPENAI_API_KEY",
+      "timeout": 120
+    }
   },
   "gateway": {
     "host": "0.0.0.0",

@@ -2,11 +2,14 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
 // MockLLMProvider is a test implementation of LLMProvider
@@ -36,6 +39,10 @@ func (m *MockLLMProvider) Chat(ctx context.Context, messages []providers.Message
 	return &providers.LLMResponse{Content: "No task provided"}, nil
 }
 
+func (m *MockLLMProvider) GetID() string {
+	return "mock"
+}
+
 func (m *MockLLMProvider) GetDefaultModel() string {
 	return "test-model"
 }
@@ -63,8 +70,8 @@ func (m *MockLLMProvider) GetMaxConcurrent() int {
 // TestSubagentTool_Name verifies tool name
 func TestSubagentTool_Name(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	if tool.Name() != "subagent" {
 		t.Errorf("Expected name 'subagent', got '%s'", tool.Name())
@@ -74,8 +81,8 @@ func TestSubagentTool_Name(t *testing.T) {
 // TestSubagentTool_Description verifies tool description
 func TestSubagentTool_Description(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	desc := tool.Description()
 	if desc == "" {
@@ -89,8 +96,8 @@ func TestSubagentTool_Description(t *testing.T) {
 // TestSubagentTool_Parameters verifies tool parameters schema
 func TestSubagentTool_Parameters(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	params := tool.Parameters()
 	if params == nil {
@@ -139,8 +146,8 @@ func TestSubagentTool_Parameters(t *testing.T) {
 // TestSubagentTool_SetContext verifies context setting
 func TestSubagentTool_SetContext(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	tool.SetContext("test-channel", "test-chat")
 
@@ -153,8 +160,8 @@ func TestSubagentTool_SetContext(t *testing.T) {
 func TestSubagentTool_Execute_Success(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, msgBus)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 	tool.SetContext("telegram", "chat-123")
 
 	ctx := context.Background()
@@ -209,8 +216,8 @@ func TestSubagentTool_Execute_Success(t *testing.T) {
 func TestSubagentTool_Execute_NoLabel(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, msgBus)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -232,8 +239,8 @@ func TestSubagentTool_Execute_NoLabel(t *testing.T) {
 // TestSubagentTool_Execute_MissingTask tests error handling for missing task
 func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -260,7 +267,7 @@ func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 
 // TestSubagentTool_Execute_NilManager tests error handling for nil manager
 func TestSubagentTool_Execute_NilManager(t *testing.T) {
-	tool := NewSubagentTool(nil, "/tmp/test", false)
+	tool := NewSubagentTool(nil, "/tmp/test", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -283,8 +290,8 @@ func TestSubagentTool_Execute_NilManager(t *testing.T) {
 func TestSubagentTool_Execute_ContextPassing(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, msgBus)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	// Set context
 	channel := "test-channel"
@@ -312,8 +319,8 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	// Create a mock provider that returns very long content
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, msgBus)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	ctx := context.Background()
 
@@ -340,8 +347,8 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 
 func TestSubagentTool_RoleInjection(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -361,9 +368,9 @@ func TestSubagentTool_RoleInjection(t *testing.T) {
 
 func TestSubagentTool_DepthLimit(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
 	manager.SetMaxDepth(2)
-	tool := NewSubagentTool(manager, "/tmp/test", false)
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
 
 	ctx := context.Background()
 	// Simulate depth 2 already reached
@@ -381,3 +388,113 @@ func TestSubagentTool_DepthLimit(t *testing.T) {
 		t.Errorf("Expected depth limit error message, got: %s", result.ForLLM)
 	}
 }
+
+// --- Skill-backed role tests ---
+
+// makeTestSkillDir creates a minimal valid skill in a temp directory and returns
+// a SkillsLoader pointing at it.
+func makeTestSkillDir(t *testing.T, skillName string, extraFiles map[string]string) (*skills.SkillsLoader, string) {
+	t.Helper()
+	base := t.TempDir()
+	wsSkills := filepath.Join(base, "skills")
+	skillDir := filepath.Join(wsSkills, skillName)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillMD := "---\nname: " + skillName + "\ndescription: Test skill " + skillName + "\n---\n\n# " + skillName + "\n\nDo the thing."
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillMD), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for rel, content := range extraFiles {
+		full := filepath.Join(skillDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loader := skills.NewSkillsLoader(base, "", "")
+	return loader, base
+}
+
+func TestSubagentTool_SkillBackedRole(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+
+	loader, _ := makeTestSkillDir(t, "test-skill", map[string]string{
+		"scripts/helper.sh": "#!/bin/sh\necho hello",
+	})
+	manager.SetSkillsLoader(loader)
+
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
+
+	// The mock provider checks for "ROLE:" in the system prompt to give a
+	// role-specific response. For skill-backed roles the system prompt
+	// embeds skill knowledge, not a bare ROLE: line — verify it succeeds
+	// and does NOT produce a "no skill matched" hint.
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"task":  "Do the thing",
+		"role":  "test-skill",
+		"label": "skill-test",
+	}
+
+	result := tool.Execute(ctx, args)
+	if result.IsError {
+		t.Fatalf("Expected success for skill-backed role, got error: %s", result.ForLLM)
+	}
+	if strings.Contains(result.ForLLM, "No skill matched role") {
+		t.Errorf("Should not contain 'No skill matched' hint when skill is found, got: %s", result.ForLLM)
+	}
+}
+
+func TestSubagentTool_FreeTextRoleFallback(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+
+	// Load an empty skill registry — role won't match anything
+	loader, _ := makeTestSkillDir(t, "some-other-skill", nil)
+	manager.SetSkillsLoader(loader)
+
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
+
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"task":  "Do stuff",
+		"role":  "Senior Wizard",
+		"label": "wizard-task",
+	}
+
+	result := tool.Execute(ctx, args)
+	if result.IsError {
+		t.Fatalf("Expected success for free-text role fallback, got error: %s", result.ForLLM)
+	}
+	// Should include the "no skill matched" hint since the role didn't match a skill
+	if !strings.Contains(result.ForLLM, "No skill matched role 'Senior Wizard'") {
+		t.Errorf("Expected 'No skill matched' hint for unmatched role, got: %s", result.ForLLM)
+	}
+}
+
+func TestSubagentTool_NoRoleNoHint(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
+
+	tool := NewSubagentTool(manager, "/tmp/test", nil, false)
+
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"task":  "Generic task",
+		"label": "no-role",
+	}
+
+	result := tool.Execute(ctx, args)
+	if result.IsError {
+		t.Fatalf("Expected success for no-role task, got error: %s", result.ForLLM)
+	}
+	// No role provided — should not include the skill hint
+	if strings.Contains(result.ForLLM, "No skill matched role") {
+		t.Errorf("Should not include skill hint when no role is specified, got: %s", result.ForLLM)
+	}
+}
+

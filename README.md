@@ -62,6 +62,8 @@
 
 👥 **Multi-User Isolation**: Host multiple users on one instance with isolated persistent workspaces, sessions, and cron tasks.
 
+🧠 **Long-Term Memory**: Optional Qdrant integration for session archival and retrieval, allowing agents to remember past contexts.
+
 💰 **Minimal Cost**: Efficient enough to run on $10 Hardware — 98% cheaper than a Mac mini.
 
 ⚡️ **Lightning Fast**: 400X Faster startup time, boot in 1 second even in 0.6GHz single core.
@@ -69,6 +71,8 @@
 🌍 **True Portability**: Single self-contained binary across RISC-V, ARM, and x86, One-click to Go!
 
 🤖 **AI-Bootstrapped**: Autonomous Go-native implementation — 95% Agent-generated core with human-in-the-loop refinement.
+ 
+📫 **Cross-Workspace Communication**: Inter-agent "Mailbox" system allowing agents to coordinate and share information while respecting privacy boundaries.
 
 |                               | OpenClaw      | NanoBot                  | **PicoClaw**                              |
 | ----------------------------- | ------------- | ------------------------ | ----------------------------------------- |
@@ -555,10 +559,9 @@ PicoClaw runs in a sandboxed environment by default. The agent can only access f
 }
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
 | `workspace` | `~/.picoclaw/workspace` | Working directory for the agent |
 | `restrict_to_workspace` | `true` | Restrict file/command access to workspace |
+| `allowed_external_paths` | `[]` | List of allowed external directories (when restricted) |
 
 #### Protected Tools
 
@@ -606,13 +609,19 @@ If you need the agent to access paths outside the workspace:
 {
   "agents": {
     "defaults": {
-      "restrict_to_workspace": false
+      "restrict_to_workspace": true
+    }
+  },
+  "workspaces": {
+    "dave": {
+      "path": "~/projects/my-project",
+      "allowed_external_paths": ["/data/assets", "~/shared"]
     }
   }
 }
 ```
 
-**Method 2: Environment variable**
+**Method 2: Disable restrictions completely (Security Risk)**
 
 ```bash
 export PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
@@ -631,6 +640,28 @@ The `restrict_to_workspace` setting applies consistently across all execution pa
 | Heartbeat tasks | Inherits same restriction ✅ |
 
 All paths share the same workspace restriction — there's no way to bypass the security boundary through subagents or scheduled tasks.
+
+### 📨 Cross-Workspace Communication (Mailbox)
+
+PicoClaw includes a built-in "Mailbox" system that allows agents in different workspaces to communicate with each other. This is particularly useful for family-focused coordination (e.g., sharing a grocery list or a calendar).
+
+#### How it works:
+- **Storage**: Messages are stored as Markdown files with YAML frontmatter in `~/.picoclaw/mailbox`.
+- **Proactive Notification**: When an agent "wakes up" (receives a message), it automatically checks its mailbox. New messages are injected into its context as a `SYSTEM` message and then marked as read.
+- **Privacy**: Each workspace has its own inbox. Agents can only see messages sent specifically to them.
+
+#### Tools:
+- `send_message`: Sends a message to another workspace (e.g., `to: "mom", content: "Don't forget the milk!"`).
+- `list_workspaces`: Lists available workspaces names for communication.
+
+#### Configuration:
+```json
+{
+  "mailbox": {
+    "path": "~/.picoclaw/mailbox"
+  }
+}
+```
 
 ### Heartbeat (Periodic Tasks)
 

@@ -33,7 +33,7 @@ func (t *SpawnTool) Name() string {
 }
 
 func (t *SpawnTool) Description() string {
-	return "Spawn a subagent to handle a task in the background. Use this for complex or time-consuming tasks that can run independently. The subagent will complete the task and report back when done."
+	return "Spawn a subagent to handle a task in the background. Use this for complex or time-consuming tasks that can run independently. If the role matches an installed skill, the sub-agent is initialized with that skill's knowledge. The subagent will complete the task and report back when done."
 }
 
 func (t *SpawnTool) Parameters() map[string]interface{} {
@@ -50,7 +50,7 @@ func (t *SpawnTool) Parameters() map[string]interface{} {
 			},
 			"role": map[string]interface{}{
 				"type":        "string",
-				"description": "The persona for the sub-agent, e.g. 'Senior Go Engineer', 'Security Auditor'. Shapes behavior.",
+				"description": "The role for the sub-agent. If this matches an installed skill name (e.g. 'summarize', 'skill-creator'), the sub-agent is initialized with that skill's knowledge and a listing of its available resources. Otherwise it is used as a free-text persona (e.g. 'Senior Go Engineer'). Check the <skills> block in your context before choosing a role.",
 			},
 			"context_files": map[string]interface{}{
 				"type":        "array",

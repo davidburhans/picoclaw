@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -207,6 +208,51 @@ func (sl *SkillsLoader) LoadSkill(name string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// GetSkillDir returns the absolute path to a skill's directory using the same
+// 3-tier resolution as LoadSkill (workspace → global → builtin).
+func (sl *SkillsLoader) GetSkillDir(name string) (string, bool) {
+	candidates := []string{sl.workspaceSkills, sl.globalSkills, sl.builtinSkills}
+	for _, base := range candidates {
+		if base == "" {
+			continue
+		}
+		skillFile := filepath.Join(base, name, "SKILL.md")
+		if _, err := os.Stat(skillFile); err == nil {
+			return filepath.Join(base, name), true
+		}
+	}
+	return "", false
+}
+
+// ListSkillFiles walks a skill directory and returns a sorted list of
+// relative file paths, excluding SKILL.md itself.
+func (sl *SkillsLoader) ListSkillFiles(dir string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		// Exclude SKILL.md — it is injected separately as the body
+		if rel == "SKILL.md" {
+			return nil
+		}
+		files = append(files, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func (sl *SkillsLoader) LoadSkillsForContext(skillNames []string) string {

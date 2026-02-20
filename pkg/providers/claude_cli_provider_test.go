@@ -424,9 +424,13 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 		t.Fatalf("CreateProvider(claude-cli) error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*ClaudeCliProvider)
+	tempProvider := provider
+	if cw, ok := provider.(*ConcurrencyWrapper); ok {
+		tempProvider = cw.LLMProvider
+	}
+	cliProvider, ok := tempProvider.(*ClaudeCliProvider)
 	if !ok {
-		t.Fatalf("CreateProvider(claude-cli) returned %T, want *ClaudeCliProvider", provider)
+		t.Fatalf("CreateProvider(claude-cli) returned %T (wrapped: %v), want *ClaudeCliProvider", provider, ok)
 	}
 	if cliProvider.workspace != "/test/ws" {
 		t.Errorf("workspace = %q, want %q", cliProvider.workspace, "/test/ws")
@@ -441,7 +445,11 @@ func TestCreateProvider_ClaudeCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider(claude-code) error = %v", err)
 	}
-	if _, ok := provider.(*ClaudeCliProvider); !ok {
+	tempProvider := provider
+	if cw, ok := provider.(*ConcurrencyWrapper); ok {
+		tempProvider = cw.LLMProvider
+	}
+	if _, ok := tempProvider.(*ClaudeCliProvider); !ok {
 		t.Fatalf("CreateProvider(claude-code) returned %T, want *ClaudeCliProvider", provider)
 	}
 }
@@ -454,7 +462,11 @@ func TestCreateProvider_ClaudeCodec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider(claudecode) error = %v", err)
 	}
-	if _, ok := provider.(*ClaudeCliProvider); !ok {
+	tempProvider := provider
+	if cw, ok := provider.(*ConcurrencyWrapper); ok {
+		tempProvider = cw.LLMProvider
+	}
+	if _, ok := tempProvider.(*ClaudeCliProvider); !ok {
 		t.Fatalf("CreateProvider(claudecode) returned %T, want *ClaudeCliProvider", provider)
 	}
 }
@@ -469,7 +481,11 @@ func TestCreateProvider_ClaudeCliDefaultWorkspace(t *testing.T) {
 		t.Fatalf("CreateProvider error = %v", err)
 	}
 
-	cliProvider, ok := provider.(*ClaudeCliProvider)
+	tempProvider := provider
+	if cw, ok := provider.(*ConcurrencyWrapper); ok {
+		tempProvider = cw.LLMProvider
+	}
+	cliProvider, ok := tempProvider.(*ClaudeCliProvider)
 	if !ok {
 		t.Fatalf("returned %T, want *ClaudeCliProvider", provider)
 	}

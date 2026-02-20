@@ -38,6 +38,10 @@ func (m *mockRegistryProvider) GetMaxConcurrent() int {
 	return 1
 }
 
+func (m *mockRegistryProvider) GetID() string {
+	return "mock-registry-id"
+}
+
 func testCfg(agents []config.AgentConfig) *config.Config {
 	return &config.Config{
 		Agents: config.AgentsConfig{

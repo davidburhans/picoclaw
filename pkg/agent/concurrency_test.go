@@ -40,6 +40,7 @@ func (m *concurrencyMockProvider) GetTemperature() float64 { return 0.7 }
 func (m *concurrencyMockProvider) GetMaxToolIterations() int { return 10 }
 func (m *concurrencyMockProvider) GetTimeout() int { return 120 }
 func (m *concurrencyMockProvider) GetMaxConcurrent() int { return 5 }
+func (m *concurrencyMockProvider) GetID() string { return "concurrency-mock-id" }
 
 func TestAgentLoop_ConcurrentProcessing(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "agent-concurrency-*")

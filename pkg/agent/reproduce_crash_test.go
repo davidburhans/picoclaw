@@ -35,6 +35,7 @@ func (m *slowMockProvider) GetTemperature() float64 { return 0.7 }
 func (m *slowMockProvider) GetMaxToolIterations() int { return 10 }
 func (m *slowMockProvider) GetTimeout() int { return 10 } // Short timeout for test
 func (m *slowMockProvider) GetMaxConcurrent() int { return 10 }
+func (m *slowMockProvider) GetID() string { return "slow-mock-id" }
 
 func TestAgentLoop_ConcurrentSummarization(t *testing.T) {
 	// Create temp workspace

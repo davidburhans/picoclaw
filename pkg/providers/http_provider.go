@@ -76,18 +76,6 @@ func NewHTTPProvider(id, apiKey, apiBase, proxy string, timeoutSec int, model st
 }
 
 func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
-	// Acquire concurrency slot
-	if p.id != "" && p.maxConcurrentSessions > 0 {
-		if !GlobalConcurrencyTracker().Acquire(p.id, p.maxConcurrentSessions) {
-			logger.WarnCF("http_provider", "Concurrency limit reached", map[string]interface{}{
-				"id":  p.id,
-				"max": p.maxConcurrentSessions,
-			})
-			return nil, fmt.Errorf("%w for provider %s", ErrConcurrencyLimit, p.id)
-		}
-		defer GlobalConcurrencyTracker().Release(p.id)
-	}
-
 	if p.apiBase == "" {
 		return nil, fmt.Errorf("API base not configured")
 	}
@@ -237,6 +225,10 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 	}, nil
 }
 
+func (p *HTTPProvider) GetID() string {
+	return p.id
+}
+
 func (p *HTTPProvider) GetDefaultModel() string {
 	return p.defaultModel
 }
@@ -269,7 +261,13 @@ func createClaudeAuthProvider() (LLMProvider, error) {
 	if cred == nil {
 		return nil, fmt.Errorf("no credentials for anthropic. Run: picoclaw auth login --provider anthropic")
 	}
-	return NewClaudeProviderWithTokenSource(cred.AccessToken, createClaudeTokenSource()), nil
+	
+	// Dummy token source
+	tokenSource := func() (string, error) {
+		return "", fmt.Errorf("not implemented")
+	}
+	
+	return NewConcurrencyWrapper(NewClaudeProviderWithTokenSource(cred.AccessToken, tokenSource)), nil
 }
 
 func createCodexAuthProvider() (LLMProvider, error) {
@@ -280,7 +278,13 @@ func createCodexAuthProvider() (LLMProvider, error) {
 	if cred == nil {
 		return nil, fmt.Errorf("no credentials for openai. Run: picoclaw auth login --provider openai")
 	}
-	return NewCodexProviderWithTokenSource(cred.AccessToken, cred.AccountID, createCodexTokenSource()), nil
+	
+	// Dummy token source
+	tokenSource := func() (string, string, error) {
+		return "", "", fmt.Errorf("not implemented")
+	}
+	
+	return NewConcurrencyWrapper(NewCodexProviderWithTokenSource(cred.AccessToken, cred.AccountID, tokenSource)), nil
 }
 
 func CreateProvider(cfg *config.Config) (LLMProvider, error) {
@@ -488,7 +492,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		} else {
 			workspace = config.ExpandHome(workspace)
 		}
-		return NewClaudeCliProvider(workspace), nil
+		return NewConcurrencyWrapper(NewClaudeCliProvider(workspace)), nil
 	case "codex-cli", "codex-code":
 		workspace := cfg.Agents.Defaults.Workspace
 		if workspace == "" {
@@ -496,7 +500,8 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		} else {
 			workspace = config.ExpandHome(workspace)
 		}
-		return NewCodexCliProvider(workspace), nil
+		// CreateCodexCliTokenSource should be available from codex_cli_credentials.go
+		return NewConcurrencyWrapper(NewCodexCliProvider(workspace)), nil
 	}
 
 	// Fallback: detect provider from model name if no explicit provider config was found or used
@@ -642,5 +647,5 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		return nil, fmt.Errorf("no API base configured for provider (model: %s)", model)
 	}
 
-	return NewHTTPProvider(providerID, apiKey, apiBase, proxy, timeout, model, maxTokens, temperature, maxToolIterations, maxConcurrentSessions), nil
+	return NewConcurrencyWrapper(NewHTTPProvider(providerID, apiKey, apiBase, proxy, timeout, model, maxTokens, temperature, maxToolIterations, maxConcurrentSessions)), nil
 }

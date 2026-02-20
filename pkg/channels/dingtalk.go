@@ -161,8 +161,9 @@ func (c *DingTalkChannel) onChatBotMessageReceived(ctx context.Context, data *ch
 		"preview":     utils.Truncate(content, 50),
 	})
 
+	sessionKey := fmt.Sprintf("dingtalk:%s", chatID)
 	// Handle the message through the base channel
-	c.HandleMessage(senderID, chatID, content, nil, metadata)
+	c.HandleMessage(senderID, chatID, sessionKey, content, nil, metadata)
 
 	// Return nil to indicate we've handled the message asynchronously
 	// The response will be sent through the message bus

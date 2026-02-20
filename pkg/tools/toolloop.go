@@ -62,7 +62,12 @@ func RunToolLoop(ctx context.Context, config ToolLoopConfig, messages []provider
 			}
 		}
 
-		// 3. Call LLM
+		// 3. Call LLM with wait for concurrency slots
+		if llmOpts == nil {
+			llmOpts = make(map[string]interface{})
+		}
+		llmOpts["wait"] = true
+
 		response, err := config.Provider.Chat(ctx, messages, providerToolDefs, config.Model, llmOpts)
 		if err != nil {
 			logger.ErrorCF("toolloop", "LLM call failed",

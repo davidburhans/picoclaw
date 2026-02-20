@@ -14,7 +14,7 @@ func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "test.txt")
 	os.WriteFile(testFile, []byte("test content"), 0644)
 
-	tool := &ReadFileTool{}
+	tool := NewReadFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": testFile,
@@ -41,7 +41,7 @@ func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 
 // TestFilesystemTool_ReadFile_NotFound verifies error handling for missing file
 func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
-	tool := &ReadFileTool{}
+	tool := NewReadFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": "/nonexistent_file_12345.txt",
@@ -62,7 +62,7 @@ func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
 
 // TestFilesystemTool_ReadFile_MissingPath verifies error handling for missing path
 func TestFilesystemTool_ReadFile_MissingPath(t *testing.T) {
-	tool := &ReadFileTool{}
+	tool := NewReadFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
@@ -84,7 +84,7 @@ func TestFilesystemTool_WriteFile_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "newfile.txt")
 
-	tool := &WriteFileTool{}
+	tool := NewWriteFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path":    testFile,
@@ -123,7 +123,7 @@ func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "subdir", "newfile.txt")
 
-	tool := &WriteFileTool{}
+	tool := NewWriteFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path":    testFile,
@@ -149,7 +149,7 @@ func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 
 // TestFilesystemTool_WriteFile_MissingPath verifies error handling for missing path
 func TestFilesystemTool_WriteFile_MissingPath(t *testing.T) {
-	tool := &WriteFileTool{}
+	tool := NewWriteFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"content": "test",
@@ -165,7 +165,7 @@ func TestFilesystemTool_WriteFile_MissingPath(t *testing.T) {
 
 // TestFilesystemTool_WriteFile_MissingContent verifies error handling for missing content
 func TestFilesystemTool_WriteFile_MissingContent(t *testing.T) {
-	tool := &WriteFileTool{}
+	tool := NewWriteFileTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": "/tmp/test.txt",
@@ -191,7 +191,7 @@ func TestFilesystemTool_ListDir_Success(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("content"), 0644)
 	os.Mkdir(filepath.Join(tmpDir, "subdir"), 0755)
 
-	tool := &ListDirTool{}
+	tool := NewListDirTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": tmpDir,
@@ -215,7 +215,7 @@ func TestFilesystemTool_ListDir_Success(t *testing.T) {
 
 // TestFilesystemTool_ListDir_NotFound verifies error handling for non-existent directory
 func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
-	tool := &ListDirTool{}
+	tool := NewListDirTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": "/nonexistent_directory_12345",
@@ -236,7 +236,7 @@ func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
 
 // TestFilesystemTool_ListDir_DefaultPath verifies default to current directory
 func TestFilesystemTool_ListDir_DefaultPath(t *testing.T) {
-	tool := &ListDirTool{}
+	tool := NewListDirTool("", nil, false)
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
@@ -267,7 +267,7 @@ func TestFilesystemTool_ReadFile_RejectsSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink not supported in this environment: %v", err)
 	}
 
-	tool := NewReadFileTool(workspace, true)
+	tool := NewReadFileTool(workspace, nil, true)
 	result := tool.Execute(context.Background(), map[string]interface{}{
 		"path": link,
 	})
@@ -277,5 +277,106 @@ func TestFilesystemTool_ReadFile_RejectsSymlinkEscape(t *testing.T) {
 	}
 	if !strings.Contains(result.ForLLM, "symlink resolves outside workspace") {
 		t.Fatalf("expected symlink escape error, got: %s", result.ForLLM)
+	}
+}
+
+func TestFilesystemTool_AllowedExternalPaths(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	external := filepath.Join(root, "external")
+	forbidden := filepath.Join(root, "forbidden")
+
+	os.MkdirAll(workspace, 0755)
+	os.MkdirAll(external, 0755)
+	os.MkdirAll(forbidden, 0755)
+
+	os.WriteFile(filepath.Join(workspace, "in.txt"), []byte("in"), 0644)
+	os.WriteFile(filepath.Join(external, "out.txt"), []byte("out"), 0644)
+	os.WriteFile(filepath.Join(forbidden, "secret.txt"), []byte("secret"), 0644)
+
+	allowedPaths := []string{external}
+	tool := NewReadFileTool(workspace, allowedPaths, true)
+
+	ctx := context.Background()
+
+	// Test 1: Access within workspace
+	res1 := tool.Execute(ctx, map[string]interface{}{"path": "in.txt"})
+	if res1.IsError {
+		t.Errorf("expected success for in.txt, got error: %s", res1.ForLLM)
+	}
+
+	// Test 2: Access within allowed external path
+	res2 := tool.Execute(ctx, map[string]interface{}{"path": filepath.Join(external, "out.txt")})
+	if res2.IsError {
+		t.Errorf("expected success for external out.txt, got error: %s", res2.ForLLM)
+	}
+
+	// Test 3: Access within forbidden external path
+	res3 := tool.Execute(ctx, map[string]interface{}{"path": filepath.Join(forbidden, "secret.txt")})
+	if !res3.IsError {
+		t.Errorf("expected error for forbidden secret.txt, got success")
+	}
+}
+// TestFilesystemTool_ReadFile_Truncation verifies truncation with max_bytes
+func TestFilesystemTool_ReadFile_Truncation(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "large.txt")
+	content := strings.Repeat("a", 10000)
+	os.WriteFile(testFile, []byte(content), 0644)
+
+	tool := NewReadFileTool("", nil, false)
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"path":      testFile,
+		"max_bytes": 1000,
+	}
+
+	result := tool.Execute(ctx, args)
+
+	if result.IsError {
+		t.Errorf("Expected success, got Error: %s", result.ForLLM)
+	}
+
+	// Should contain content and truncation message
+	if !strings.Contains(result.ForLLM, "[TRUNCATED") {
+		t.Errorf("Expected truncation message, got: %s", result.ForLLM)
+	}
+
+	// Should contain exactly 1000 characters plus header/footer (in this case footer)
+	expectedPrefix := strings.Repeat("a", 1000)
+	if !strings.HasPrefix(result.ForLLM, expectedPrefix) {
+		t.Errorf("Expected content to start with 1000 'a's")
+	}
+}
+
+// TestFilesystemTool_ReadFile_Offset verifies paging with offset
+func TestFilesystemTool_ReadFile_Offset(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "paging.txt")
+	content := "0123456789"
+	os.WriteFile(testFile, []byte(content), 0644)
+
+	tool := NewReadFileTool("", nil, false)
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"path":      testFile,
+		"offset":    5,
+		"max_bytes": 2,
+	}
+
+	result := tool.Execute(ctx, args)
+
+	if result.IsError {
+		t.Errorf("Expected success, got Error: %s", result.ForLLM)
+	}
+
+	// Should show bytes 5-7 (offset 5, read 2)
+	expectedContent := "56"
+	if !strings.HasPrefix(result.ForLLM, expectedContent) {
+		t.Errorf("Expected content '56', got: %s", result.ForLLM)
+	}
+
+	if !strings.Contains(result.ForLLM, "[TRUNCATED: showing bytes 5-7 of 10 total") {
+		t.Errorf("Expected correct truncation message, got: %s", result.ForLLM)
 	}
 }

@@ -138,6 +138,10 @@ func (p *CodexProvider) Chat(ctx context.Context, messages []Message, tools []To
 	return parseCodexResponse(resp), nil
 }
 
+func (p *CodexProvider) GetID() string {
+	return "codex-auth:" + p.accountID
+}
+
 func (p *CodexProvider) GetDefaultModel() string {
 	return codexDefaultModel
 }

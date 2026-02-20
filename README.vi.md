@@ -61,6 +61,8 @@
 
 🪶 **Siêu nhẹ**: Bộ nhớ sử dụng <10MB — nhỏ hơn 99% so với Clawdbot (chức năng cốt lõi).
 
+🧠 **Bộ nhớ dài hạn**: Tích hợp Qdrant tùy chọn để lưu trữ và truy xuất phiên, cho phép tác nhân ghi nhớ các ngữ cảnh trong quá khứ.
+
 💰 **Chi phí tối thiểu**: Đủ hiệu quả để chạy trên phần cứng $10 — rẻ hơn 98% so với Mac mini.
 
 ⚡️ **Khởi động siêu nhanh**: Nhanh gấp 400 lần, khởi động trong 1 giây ngay cả trên CPU đơn nhân 0.6GHz.

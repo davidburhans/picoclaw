@@ -45,6 +45,8 @@
 
 🪶 **超軽量**: メモリフットプリント 10MB 未満 — Clawdbot のコア機能より 99% 小さい。
 
+🧠 **長期記憶**: オプションの Qdrant 統合によるセッションのアーカイブと検索。エージェントが過去のコンテキストを記憶できるようになります。
+
 💰 **最小コスト**: $10 ハードウェアで動作 — Mac mini より 98% 安い。
 
 ⚡️ **超高速**: 起動時間 400 倍高速、0.6GHz シングルコアでも 1 秒で起動。
@@ -458,7 +460,8 @@ PicoClaw は設定されたワークスペース（デフォルト: `~/.picoclaw
     "dave": {
       "path": "~/.picoclaw/workspace_dave",
       "users": ["discord_id_1", "telegram_id_A"],
-      "restrict_to_workspace": true
+      "restrict_to_workspace": true,
+      "allowed_external_paths": ["/data/assets", "~/shared"]
     },
     "wife": {
       "path": "~/.picoclaw/workspace_wife",

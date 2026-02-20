@@ -38,7 +38,7 @@ func NewAgentInstance(
 	cfg *config.Config,
 	provider providers.LLMProvider,
 ) *AgentInstance {
-	workspace := resolveAgentWorkspace(agentCfg, defaults)
+	workspace, allowedPaths := resolveAgentWorkspace(agentCfg, defaults, cfg)
 	os.MkdirAll(workspace, 0755)
 
 	model := resolveAgentModel(agentCfg, defaults)
@@ -49,12 +49,12 @@ func NewAgentInstance(
 		restrict = *defaults.RestrictToWorkspace
 	}
 	toolsRegistry := tools.NewToolRegistry()
-	toolsRegistry.Register(tools.NewReadFileTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewListDirTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewExecToolWithConfig(workspace, restrict, cfg))
-	toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict))
+	toolsRegistry.Register(tools.NewReadFileTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewWriteFileTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewListDirTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewExecToolWithConfig(workspace, allowedPaths, restrict, cfg))
+	toolsRegistry.Register(tools.NewEditFileTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewAppendFileTool(workspace, allowedPaths, restrict))
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessionsManager := session.NewSessionManager(sessionsDir)
@@ -104,17 +104,27 @@ func NewAgentInstance(
 	}
 }
 
-// resolveAgentWorkspace determines the workspace directory for an agent.
-func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) string {
+// resolveAgentWorkspace determines the workspace directory for an agent and any allowed external paths.
+func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentDefaults, cfg *config.Config) (string, []string) {
+	wsName := ""
 	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
-		return config.ExpandHome(strings.TrimSpace(agentCfg.Workspace))
+		wsName = strings.TrimSpace(agentCfg.Workspace)
+	} else if agentCfg == nil || agentCfg.Default || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
+		wsName = defaults.Workspace
 	}
-	if agentCfg == nil || agentCfg.Default || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
-		return config.ExpandHome(defaults.Workspace)
+
+	if wsName != "" {
+		// Check if it's a named workspace in config
+		if wsCfg, ok := cfg.Workspaces[wsName]; ok {
+			return config.ExpandHome(wsCfg.Path), wsCfg.AllowedExternalPaths
+		}
+		// Otherwise treat as a path
+		return config.ExpandHome(wsName), nil
 	}
+
 	home, _ := os.UserHomeDir()
 	id := routing.NormalizeAgentID(agentCfg.ID)
-	return filepath.Join(home, ".picoclaw", "workspace-"+id)
+	return filepath.Join(home, ".picoclaw", "workspace-"+id), nil
 }
 
 // resolveAgentModel resolves the primary model for an agent.

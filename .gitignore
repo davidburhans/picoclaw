@@ -49,7 +49,6 @@ dist/
 
 # Local runtime artifacts
 build.log
-workspace/
 
 .dave/
 .jackie/

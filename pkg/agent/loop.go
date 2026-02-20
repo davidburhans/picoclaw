@@ -23,7 +23,11 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mailbox"
 	"github.com/sipeed/picoclaw/pkg/mcp"
+	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/memory/embedding"
+	"github.com/sipeed/picoclaw/pkg/memory/qdrant"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/state"
@@ -55,6 +59,8 @@ type AgentLoop struct {
 	summarizing    sync.Map // Tracks which sessions are currently being summarized
 	sessionLocks   sync.Map // Per-session mutexes to prevent concurrent processing
 	channelManager *channels.Manager
+	memoryManager  *memory.Manager
+	mailboxClient  *mailbox.Client
 
 	// Concurrency control
 	wg               sync.WaitGroup
@@ -89,22 +95,23 @@ type processOptions struct {
 	EnableSummary   bool   // Whether to trigger summarization
 	SendResponse    bool   // Whether to send response via bus
 	NoHistory       bool   // If true, don't load session history (for heartbeat)
+	Metadata        map[string]string
 }
 
 // createToolRegistry creates a tool registry with common tools.
 // This is shared between main agent and subagents.
-func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus) *tools.ToolRegistry {
+func createToolRegistry(workspace string, allowedPaths []string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus, memoryManager *memory.Manager) *tools.ToolRegistry {
 	registry := tools.NewToolRegistry()
 
 	// File system tools
-	registry.Register(tools.NewReadFileTool(workspace, restrict))
-	registry.Register(tools.NewWriteFileTool(workspace, restrict))
-	registry.Register(tools.NewListDirTool(workspace, restrict))
-	registry.Register(tools.NewEditFileTool(workspace, restrict))
-	registry.Register(tools.NewAppendFileTool(workspace, restrict))
+	registry.Register(tools.NewReadFileTool(workspace, allowedPaths, restrict))
+	registry.Register(tools.NewWriteFileTool(workspace, allowedPaths, restrict))
+	registry.Register(tools.NewListDirTool(workspace, allowedPaths, restrict))
+	registry.Register(tools.NewEditFileTool(workspace, allowedPaths, restrict))
+	registry.Register(tools.NewAppendFileTool(workspace, allowedPaths, restrict))
 
 	// Shell execution
-	registry.Register(tools.NewExecTool(workspace, restrict))
+	registry.Register(tools.NewExecTool(workspace, allowedPaths, restrict))
 
 	// Session management
 	registry.Register(tools.NewReadSessionTool(workspace))
@@ -178,6 +185,12 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 		}
 	}
 
+	// Long-term memory tools
+	if memoryManager != nil && memoryManager.IsEnabled() {
+		registry.Register(tools.NewMemorySearchTool(memoryManager, workspace))
+		registry.Register(tools.NewMemoryBrowseTool(memoryManager, workspace))
+	}
+
 	return registry
 }
 
@@ -248,7 +261,28 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		summarizationSem: make(chan struct{}, 3), // Limit concurrent summarization tasks to 3
 	}
 
+	// Initialize memory manager if enabled
+	if cfg.Memory.Enabled {
+		providerType := strings.ToLower(cfg.Memory.Provider)
+		var db memory.VectorDB
+		var err error
+
+		if providerType == "qdrant" {
+			db, err = qdrant.NewClient(cfg.Memory.Qdrant.URL, cfg.Memory.Qdrant.APIKey)
+			if err != nil {
+				logger.ErrorCF("agent", "Failed to initialize Qdrant client", map[string]interface{}{"error": err})
+			}
+		}
+
+		if db != nil {
+			embedder := embedding.NewClient(cfg.Memory.Embedding)
+			al.memoryManager = memory.NewManager(cfg.Memory, db, embedder)
+			logger.InfoCF("agent", "Long-term memory enabled", map[string]interface{}{"provider": providerType})
+		}
+	}
+
 	// Pre-initialize default workspace
+	al.mailboxClient = mailbox.NewClient(cfg.ResolveMailboxPath())
 	al.getOrCreateWorkspaceContext("")
 
 	return al
@@ -287,21 +321,28 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 		restrict = *al.config.Agents.Defaults.RestrictToWorkspace
 	}
 
+	var allowedPaths []string
 	// Check for workspace-specific override
 	for _, ws := range al.config.Workspaces {
 		if config.ExpandHome(ws.Path) == workspace {
 			if ws.RestrictToWorkspace != nil {
 				restrict = *ws.RestrictToWorkspace
 			}
+			allowedPaths = ws.AllowedExternalPaths
 			break
 		}
 	}
 
 	// Create tool registry for main agent
-	toolsRegistry := createToolRegistry(workspace, restrict, al.config, al.bus)
+	toolsRegistry := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
 
 	// Create subagent manager
-	subagentManager := tools.NewSubagentManager(al.provider, al.model, workspace, al.bus)
+	subagentManager := tools.NewSubagentManager(al.provider, al.model, workspace, allowedPaths, al.bus)
+
+	// Register mailbox tools
+	wsName := al.config.ResolveWorkspaceName(workspace)
+	toolsRegistry.Register(tools.NewSendMessageTool(al.mailboxClient, wsName))
+	toolsRegistry.Register(tools.NewListWorkspacesTool(al.config))
 
 	// Apply subagent config
 	maxIterations := al.maxIterations
@@ -328,7 +369,7 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	}
 	subagentManager.SetTemperature(temp)
 
-	subagentTools := createToolRegistry(workspace, restrict, al.config, al.bus)
+	subagentTools := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
 	subagentTools.Register(&tools.ReportCompletionTool{})
 	subagentManager.SetTools(subagentTools)
 
@@ -337,7 +378,7 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	toolsRegistry.Register(spawnTool)
 
 	// Register subagent tool (synchronous execution)
-	subagentTool := tools.NewSubagentTool(subagentManager, workspace, restrict)
+	subagentTool := tools.NewSubagentTool(subagentManager, workspace, allowedPaths, restrict)
 	toolsRegistry.Register(subagentTool)
 
 	wctx.sessions = session.NewSessionManager(filepath.Join(workspace, "sessions"))
@@ -383,6 +424,9 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	wctx.contextBuilder = NewContextBuilder(workspace, al.config.Agents.Defaults.Name)
 	wctx.contextBuilder.SetToolsRegistry(toolsRegistry)
 	wctx.contextBuilder.SetMCPManager(mcpMgr)
+
+	// Wire skill registry into sub-agent manager for skill-backed role resolution
+	subagentManager.SetSkillsLoader(wctx.contextBuilder.GetSkillsLoader())
 
 	wctx.tools = toolsRegistry
 
@@ -458,6 +502,11 @@ func (al *AgentLoop) Stop() {
 	// Wait for all active message processing to complete
 	al.wg.Wait()
 
+	// Close long-term memory connection
+	if al.memoryManager != nil {
+		al.memoryManager.Close()
+	}
+
 	// Clean up all MCP clients in all workspaces
 	al.wsMu.RLock()
 	defer al.wsMu.RUnlock()
@@ -479,6 +528,10 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+}
+
+func (al *AgentLoop) SetMemoryManager(mm *memory.Manager) {
+	al.memoryManager = mm
 }
 
 // RecordLastChannel records the last active channel for this workspace.
@@ -593,6 +646,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: "I've completed processing but have no response to give.",
 		EnableSummary:   true,
 		SendResponse:    false,
+		Metadata:        msg.Metadata,
 	}, wctx)
 }
 
@@ -609,12 +663,21 @@ func (al *AgentLoop) generateSessionSummary(ctx context.Context, history []provi
 		{Role: "system", Content: prompt},
 	}
 
-	// Limit history.
-	start := 0
-	if len(history) > 20 {
-		start = len(history) - 20
+	// Limit history and filter out tool messages to avoid orphan results
+	// which cause 400 errors from strict providers like Anthropic.
+	filteredHistory := make([]providers.Message, 0, len(history))
+	for _, m := range history {
+		if m.Role == "tool" || len(m.ToolCalls) > 0 {
+			continue
+		}
+		filteredHistory = append(filteredHistory, m)
 	}
-	msgs = append(msgs, history[start:]...)
+
+	start := 0
+	if len(filteredHistory) > 20 {
+		start = len(filteredHistory) - 20
+	}
+	msgs = append(msgs, filteredHistory[start:]...)
 
 	// Disable tools for summary generation
 	resp, err := al.provider.Chat(ctx, msgs, []providers.ToolDefinition{}, al.model, map[string]interface{}{
@@ -714,6 +777,22 @@ func (al *AgentLoop) RotateSession(ctx context.Context, baseKey, archiveName str
 	// The lock map grows indefinitely otherwise.
 	al.sessionLocks.Delete(oldKey)
 
+	// 5. Archive session to long-term memory if enabled
+	if al.memoryManager != nil {
+		history := wctx.sessions.GetHistory(newArchiveKey)
+		if len(history) > 0 {
+			go func() {
+				archiveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				if err := al.memoryManager.ArchiveSession(archiveCtx, wctx.path, newArchiveKey, history); err != nil {
+					logger.WarnCF("agent", "Failed to archive session to long-term memory", map[string]interface{}{"error": err, "session": newArchiveKey})
+				} else {
+					logger.InfoCF("agent", "Session archived to long-term memory", map[string]interface{}{"session": newArchiveKey})
+				}
+			}()
+		}
+	}
+
 	logger.InfoCF("agent", "RotateSession: completed", map[string]interface{}{"newKey": newKey, "archived": newArchiveKey})
 	return newKey, newArchiveKey, nil
 }
@@ -797,8 +876,21 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx
 		}
 	}
 
-	// 1. Update tool contexts
-	al.updateToolContexts(wctx.tools, opts.Channel, opts.ChatID)
+	// 1.5. Check for mailbox messages and inject as system context
+	mailboxContext := ""
+	workspaceName := al.config.ResolveWorkspaceName(wctx.path)
+	messages_inbox, err := al.mailboxClient.List(workspaceName)
+	if err == nil && len(messages_inbox) > 0 {
+		var sb strings.Builder
+		sb.WriteString("SYSTEM: You have the following unread inter-agent messages in your mailbox:\n")
+		for _, m := range messages_inbox {
+			sb.WriteString(fmt.Sprintf("- From %s (%s): %s\n", m.From, m.Timestamp.Format("2006-01-02 15:04"), m.Content))
+			// Auto-mark as read once injected into context
+			al.mailboxClient.MarkRead(workspaceName, m.Filename)
+		}
+		sb.WriteString("[End of Mailbox Messages]\n")
+		mailboxContext = sb.String()
+	}
 
 	// 2. Build messages (skip history for heartbeat)
 	var history []providers.Message
@@ -807,6 +899,12 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx
 		history = wctx.sessions.GetHistory(opts.SessionKey)
 		summary = wctx.sessions.GetSummary(opts.SessionKey)
 	}
+
+	// Inject mailbox messages at the beginning of context if present
+	if mailboxContext != "" {
+		history = append([]providers.Message{{Role: "system", Content: mailboxContext}}, history...)
+	}
+
 	messages := wctx.contextBuilder.BuildMessages(
 		history,
 		summary,
@@ -819,6 +917,22 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx
 	// 3. Save user message to session
 	wctx.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
+	// 10. Clear reactions (remove gear) in a defer to ensure it happens on failure too
+	defer func() {
+		if opts.Channel == "discord" && opts.Metadata["message_id"] != "" {
+			al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+				Channel: opts.Channel,
+				ChatID:  opts.ChatID,
+				Type:    bus.MessageTypeReaction,
+				Metadata: map[string]string{
+					"action":     "remove",
+					"emoji":      "⚙️",
+					"message_id": opts.Metadata["message_id"],
+				},
+			})
+		}
+	}()
+
 	// 4. Run LLM iteration loop
 	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts, wctx)
 	if err != nil {
@@ -828,9 +942,6 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx
 		wctx.sessions.Save(opts.SessionKey)
 		return "", err
 	}
-
-	// If last tool had ForUser content and we already sent it, we might not need to send final response
-	// This is controlled by the tool's Silent flag and ForUser content
 
 	// 5. Handle empty response
 	if finalContent == "" {
@@ -963,75 +1074,125 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		var response *providers.LLMResponse
 		var err error
 
+		// Define queue notification for Discord
+		onWait := func(info providers.WaiterInfo) {
+			if opts.Channel == "discord" && opts.Metadata["message_id"] != "" {
+				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					Channel: opts.Channel,
+					ChatID:  opts.ChatID,
+					Type:    bus.MessageTypeReaction,
+					Content: fmt.Sprintf("%d", info.Position),
+					Metadata: map[string]string{
+						"action":     "add",
+						"emoji":      "queue",
+						"message_id": opts.Metadata["message_id"],
+					},
+				})
+			}
+		}
+
 		// Retry loop for context/token errors
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
 			response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
 				"max_tokens":  8192,
 				"temperature": 0.7,
+				"wait":        true, // Wait for concurrency slots rather than retrying manually
+				"on_wait":     onWait,
 			})
+
+			// If we were waiting in queue, clear queue reactions and add gear
+			if opts.Channel == "discord" && opts.Metadata["message_id"] != "" {
+				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					Channel: opts.Channel,
+					ChatID:  opts.ChatID,
+					Type:    bus.MessageTypeReaction,
+					Metadata: map[string]string{
+						"action":     "clear_queue",
+						"message_id": opts.Metadata["message_id"],
+					},
+				})
+				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					Channel: opts.Channel,
+					ChatID:  opts.ChatID,
+					Type:    bus.MessageTypeReaction,
+					Metadata: map[string]string{
+						"action":     "add",
+						"emoji":      "⚙️",
+						"message_id": opts.Metadata["message_id"],
+					},
+				})
+			}
 
 			if err == nil {
 				break // Success
 			}
 
-			errMsg := strings.ToLower(err.Error())
-			// Check for context window errors (provider specific, but usually contain "token" or "invalid")
-			isContextError := strings.Contains(errMsg, "token") ||
-				strings.Contains(errMsg, "context") ||
-				strings.Contains(errMsg, "invalidparameter") ||
-				strings.Contains(errMsg, "length")
+			// Classify error using robust classification logic
+			fErr := providers.ClassifyError(err, al.provider.GetID(), al.model)
+			isTokenLimit := fErr != nil && fErr.Reason == providers.FailoverTokenLimit
 
-			if isContextError && retry < maxRetries {
-				logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]interface{}{
-					"error": err.Error(),
-					"retry": retry,
-				})
-
-				// Notify user on first retry only
-				if retry == 0 && !constants.IsInternalChannel(opts.Channel) && opts.SendResponse {
-					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-						Channel: opts.Channel,
-						ChatID:  opts.ChatID,
-						Content: "⚠️ Context window exceeded. Compressing history and retrying...",
+			if isTokenLimit && retry < maxRetries {
+					logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]interface{}{
+						"error": err.Error(),
+						"retry": retry,
 					})
+
+					// Notify user on first retry only
+					if retry == 0 && !constants.IsInternalChannel(opts.Channel) && opts.SendResponse {
+						al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+							Channel: opts.Channel,
+							ChatID:  opts.ChatID,
+							Content: "⚠️ Context window exceeded. Compressing history and retrying...",
+						})
+					}
+
+					// COMPRESSION LOGIC REFACTOR:
+					// To avoid fragile state reloading, we perform a local compression on history
+					// and rebuild the messages list for the retry.
+					history := wctx.sessions.GetHistory(opts.SessionKey)
+					if len(history) > 4 {
+						// Perform emergency compression on the history slice (dropped oldest 50%)
+						// We must maintain tool call/result parity!
+						system := history[0]
+						conversation := history[1 : len(history)-1]
+						last := history[len(history)-1]
+						
+						mid := len(conversation) / 2
+						
+						// Back up mid if it points to a tool result orphan
+						for mid > 0 && conversation[mid].Role == "tool" {
+							mid--
+						}
+						
+						droppedCount := mid
+						newHist := make([]providers.Message, 0, len(history))
+						newHist = append(newHist, system) // System
+						newHist = append(newHist, providers.Message{
+							Role:    "system",
+							Content: fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", droppedCount),
+						})
+						newHist = append(newHist, conversation[mid:]...)
+						newHist = append(newHist, last) // Last message
+
+						// Update session manager so future iterations/rounds don't hit the same limit
+						wctx.sessions.SetHistory(opts.SessionKey, newHist)
+						wctx.sessions.Save(opts.SessionKey)
+
+						// Rebuild messages for CURRENT iteration retry
+						newSummary := wctx.sessions.GetSummary(opts.SessionKey)
+						messages = wctx.contextBuilder.BuildMessages(
+							newHist,
+							newSummary,
+							"", // History already has the user message if iteration > 1 (or we just added it)
+							nil,
+							opts.Channel,
+							opts.ChatID,
+						)
+					}
+
+					continue
 				}
-
-				// COMPRESSION LOGIC REFACTOR:
-				// To avoid fragile state reloading, we perform a local compression on history
-				// and rebuild the messages list for the retry.
-				history := wctx.sessions.GetHistory(opts.SessionKey)
-				if len(history) > 4 {
-					// Perform emergency compression on the history slice (dropped oldest 50%)
-					conversation := history[1 : len(history)-1]
-					mid := len(conversation) / 2
-					newHist := make([]providers.Message, 0, len(history))
-					newHist = append(newHist, history[0]) // System
-					newHist = append(newHist, providers.Message{
-						Role:    "system",
-						Content: fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", mid),
-					})
-					newHist = append(newHist, conversation[mid:]...)
-					newHist = append(newHist, history[len(history)-1]) // Last message
-
-					// Update session manager so future iterations/rounds don't hit the same limit
-					wctx.sessions.SetHistory(opts.SessionKey, newHist)
-					wctx.sessions.Save(opts.SessionKey)
-
-					// Rebuild messages for CURRENT iteration retry
-					newSummary := wctx.sessions.GetSummary(opts.SessionKey)
-					messages = wctx.contextBuilder.BuildMessages(
-						newHist,
-						newSummary,
-						"", // History already has the user message if iteration > 1 (or we just added it)
-						nil,
-						opts.Channel,
-						opts.ChatID,
-					)
-				}
-
-				continue
-			}
 
 			// Real error or success, break loop
 			break
@@ -1040,8 +1201,9 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		if err != nil {
 			logger.ErrorCF("agent", "LLM call failed",
 				map[string]interface{}{
-					"iteration": iteration,
-					"error":     err.Error(),
+					"iteration":       iteration,
+					"error":           err.Error(),
+					"message_summary": getMessageSummary(messages),
 				})
 			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
@@ -1091,63 +1253,80 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		wctx.sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
 		// Execute tool calls
-		for _, tc := range response.ToolCalls {
-			// Log tool call with arguments preview
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
-				map[string]interface{}{
-					"tool":      tc.Name,
-					"iteration": iteration,
-				})
-
-			// Create async callback for tools that implement AsyncTool
-			// NOTE: Following openclaw's design, async tools do NOT send results directly to users.
-			// Instead, they notify the agent via PublishInbound, and the agent decides
-			// whether to forward the result to the user (in processSystemMessage).
-			asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
-				// Log the async completion but don't send directly to user
-				// The agent will handle user notification via processSystemMessage
-				if !result.Silent && result.ForUser != "" {
-					logger.InfoCF("agent", "Async tool completed, agent will handle notification",
-						map[string]interface{}{
-							"tool":        tc.Name,
-							"content_len": len(result.ForUser),
-						})
-				}
-			}
-
-			toolResult := wctx.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
-
-			// Send ForUser content to user immediately if not Silent
-			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
+		if len(response.ToolCalls) > 0 {
+			// Add tool reaction for Discord
+			if opts.Channel == "discord" && opts.Metadata["message_id"] != "" {
 				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
-					Content: toolResult.ForUser,
+					Type:    bus.MessageTypeReaction,
+					Metadata: map[string]string{
+						"action":     "add",
+						"emoji":      "🛠️",
+						"message_id": opts.Metadata["message_id"],
+					},
 				})
-				logger.DebugCF("agent", "Sent tool result to user",
+				// Remove reaction at the end of tool execution block (or iteration)
+				defer al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					Channel: opts.Channel,
+					ChatID:  opts.ChatID,
+					Type:    bus.MessageTypeReaction,
+					Metadata: map[string]string{
+						"action":     "remove",
+						"emoji":      "🛠️",
+						"message_id": opts.Metadata["message_id"],
+					},
+				})
+			}
+
+			for _, tc := range response.ToolCalls {
+				// Log tool call with arguments preview
+				argsJSON, _ := json.Marshal(tc.Arguments)
+				argsPreview := utils.Truncate(string(argsJSON), 200)
+				logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
 					map[string]interface{}{
-						"tool":        tc.Name,
-						"content_len": len(toolResult.ForUser),
+						"tool":      tc.Name,
+						"iteration": iteration,
 					})
-			}
 
-			// Determine content for LLM based on tool result
-			contentForLLM := toolResult.ForLLM
-			if contentForLLM == "" && toolResult.Err != nil {
-				contentForLLM = toolResult.Err.Error()
-			}
+				// Create async callback for tools that implement AsyncTool
+				asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
+					if !result.Silent && result.ForUser != "" {
+						logger.InfoCF("agent", "Async tool completed, agent will handle notification",
+							map[string]interface{}{
+								"tool":        tc.Name,
+								"content_len": len(result.ForUser),
+							})
+					}
+				}
 
-			toolResultMsg := providers.Message{
-				Role:       "tool",
-				Content:    contentForLLM,
-				ToolCallID: tc.ID,
-			}
-			messages = append(messages, toolResultMsg)
+				toolResult := wctx.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
 
-			// Save tool result message to session
-			wctx.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+				// Send ForUser content to user immediately if not Silent
+				if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
+					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+						Channel: opts.Channel,
+						ChatID:  opts.ChatID,
+						Content: toolResult.ForUser,
+					})
+				}
+
+				// Determine content for LLM based on tool result
+				contentForLLM := toolResult.ForLLM
+				if contentForLLM == "" && toolResult.Err != nil {
+					contentForLLM = toolResult.Err.Error()
+				}
+
+				toolResultMsg := providers.Message{
+					Role:       "tool",
+					Content:    contentForLLM,
+					ToolCallID: tc.ID,
+				}
+				messages = append(messages, toolResultMsg)
+
+				// Save tool result message to session
+				wctx.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+			}
 		}
 	}
 
@@ -1227,7 +1406,10 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 	// Keep system prompt (usually [0]) and the very last message (user's trigger)
 	// We want to drop the oldest half of the *conversation*
 	// Assuming [0] is system, [1:] is conversation
+	system := history[0]
 	conversation := history[1 : len(history)-1]
+	last := history[len(history)-1]
+
 	if len(conversation) == 0 {
 		return
 	}
@@ -1235,26 +1417,21 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 	// Helper to find the mid-point of the conversation
 	mid := len(conversation) / 2
 
-	// New history structure:
-	// 1. System Prompt
-	// 2. [Summary of dropped part] - synthesized
-	// 3. Second half of conversation
-	// 4. Last message
-
-	// Simplified approach for emergency: Drop first half of conversation
-	// and rely on existing summary if present, or create a placeholder.
+	// BUG-1 FIX: Ensure we don't drop the tool call (assistant role) if we kept the result (tool role)
+	// Protocol requires [assistant (tool_call), tool (result)] pairs.
+	// We back up mid if it points to a tool result, ensuring we either drop both or keep both.
+	for mid > 0 && conversation[mid].Role == "tool" {
+		mid--
+	}
 
 	droppedCount := mid
 	keptConversation := conversation[mid:]
 
 	newHistory := make([]providers.Message, 0)
-	newHistory = append(newHistory, history[0]) // System prompt
+	newHistory = append(newHistory, system)
 
 	// Add a note about compression
 	compressionNote := fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", droppedCount)
-	// If there was an existing summary, we might lose it if it was in the dropped part (which is just messages).
-	// The summary is stored separately in session.Summary, so it persists!
-	// We just need to ensure the user knows there's a gap.
 
 	// We only modify the messages list here
 	newHistory = append(newHistory, providers.Message{
@@ -1263,7 +1440,7 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 	})
 
 	newHistory = append(newHistory, keptConversation...)
-	newHistory = append(newHistory, history[len(history)-1]) // Last message
+	newHistory = append(newHistory, last)
 
 	// Update session
 	wctx.sessions.SetHistory(sessionKey, newHistory)
@@ -1274,6 +1451,29 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 		"dropped_msgs": droppedCount,
 		"new_count":    len(newHistory),
 	})
+}
+
+
+// getMessageSummary returns a concise summary of messages for logging
+func getMessageSummary(messages []providers.Message) []map[string]interface{} {
+	summary := make([]map[string]interface{}, len(messages))
+	for i, m := range messages {
+		item := map[string]interface{}{
+			"role": m.Role,
+		}
+		if len(m.ToolCalls) > 0 {
+			toolNames := make([]string, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				toolNames[j] = tc.Name
+			}
+			item["tool_calls"] = toolNames
+		}
+		if m.ToolCallID != "" {
+			item["tool_call_id"] = m.ToolCallID
+		}
+		summary[i] = item
+	}
+	return summary
 }
 
 // GetStartupInfo returns information about loaded tools and skills for the default workspace.
@@ -1363,6 +1563,15 @@ func (al *AgentLoop) summarizeSession(wctx *workspaceContext, sessionKey string)
 	}
 
 	toSummarize := history[:len(history)-4]
+
+	// Archive to long-term memory before truncating
+	if al.memoryManager != nil && al.memoryManager.IsEnabled() {
+		if err := al.memoryManager.ArchiveSession(ctx, wctx.path, sessionKey, toSummarize); err != nil {
+			logger.WarnCF("agent", "Failed to archive session segment during summarization", map[string]interface{}{"error": err, "session": sessionKey})
+		} else {
+			logger.InfoCF("agent", "Archived session segment to long-term memory", map[string]interface{}{"session": sessionKey, "messages": len(toSummarize)})
+		}
+	}
 
 	// Oversized Message Guard
 	// Skip messages larger than 50% of context window to prevent summarizer overflow

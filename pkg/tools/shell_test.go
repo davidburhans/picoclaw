@@ -11,7 +11,7 @@ import (
 
 // TestShellTool_Success verifies successful command execution
 func TestShellTool_Success(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -38,7 +38,7 @@ func TestShellTool_Success(t *testing.T) {
 
 // TestShellTool_Failure verifies failed command execution
 func TestShellTool_Failure(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -65,7 +65,7 @@ func TestShellTool_Failure(t *testing.T) {
 
 // TestShellTool_Timeout verifies command timeout handling
 func TestShellTool_Timeout(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 	tool.SetTimeout(100 * time.Millisecond)
 
 	ctx := context.Background()
@@ -93,7 +93,7 @@ func TestShellTool_WorkingDir(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "test.txt")
 	os.WriteFile(testFile, []byte("test content"), 0644)
 
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -114,7 +114,7 @@ func TestShellTool_WorkingDir(t *testing.T) {
 
 // TestShellTool_DangerousCommand verifies safety guard blocks dangerous commands
 func TestShellTool_DangerousCommand(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -135,7 +135,7 @@ func TestShellTool_DangerousCommand(t *testing.T) {
 
 // TestShellTool_MissingCommand verifies error handling for missing command
 func TestShellTool_MissingCommand(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{}
@@ -150,7 +150,7 @@ func TestShellTool_MissingCommand(t *testing.T) {
 
 // TestShellTool_StderrCapture verifies stderr is captured and included
 func TestShellTool_StderrCapture(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -170,7 +170,7 @@ func TestShellTool_StderrCapture(t *testing.T) {
 
 // TestShellTool_OutputTruncation verifies long output is truncated
 func TestShellTool_OutputTruncation(t *testing.T) {
-	tool := NewExecTool("", false)
+	tool := NewExecTool("", nil, false)
 
 	ctx := context.Background()
 	// Generate long output (>10000 chars)
@@ -189,7 +189,7 @@ func TestShellTool_OutputTruncation(t *testing.T) {
 // TestShellTool_RestrictToWorkspace verifies workspace restriction
 func TestShellTool_RestrictToWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
-	tool := NewExecTool(tmpDir, false)
+	tool := NewExecTool(tmpDir, nil, false)
 	tool.SetRestrictToWorkspace(true)
 
 	ctx := context.Background()
@@ -206,5 +206,50 @@ func TestShellTool_RestrictToWorkspace(t *testing.T) {
 
 	if !strings.Contains(result.ForLLM, "blocked") && !strings.Contains(result.ForUser, "blocked") {
 		t.Errorf("Expected 'blocked' message for path traversal, got ForLLM: %s, ForUser: %s", result.ForLLM, result.ForUser)
+	}
+}
+
+func TestShellTool_AllowedExternalPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	externalDir := t.TempDir()
+	
+	testFile := filepath.Join(externalDir, "external.txt")
+	os.WriteFile(testFile, []byte("external content"), 0644)
+
+	// Restricted to tmpDir but allowing externalDir
+	tool := NewExecTool(tmpDir, []string{externalDir}, true)
+
+	ctx := context.Background()
+	
+	// Should allow command referencing externalDir
+	args := map[string]interface{}{
+		"command": "cat " + testFile,
+	}
+	result := tool.Execute(ctx, args)
+	
+	if result.IsError {
+		t.Errorf("Expected success for allowed external path, got error: %s", result.ForLLM)
+	}
+	
+	if !strings.Contains(result.ForUser, "external content") {
+		t.Errorf("Expected content from external path, got: %s", result.ForUser)
+	}
+
+	// Should still block other external paths
+	forbiddenDir := t.TempDir()
+	forbiddenFile := filepath.Join(forbiddenDir, "forbidden.txt")
+	os.WriteFile(forbiddenFile, []byte("secret"), 0644)
+	
+	args = map[string]interface{}{
+		"command": "cat " + forbiddenFile,
+	}
+	result = tool.Execute(ctx, args)
+	
+	if !result.IsError {
+		t.Errorf("Expected error for forbidden external path, got success")
+	}
+	
+	if !strings.Contains(result.ForLLM, "blocked") {
+		t.Errorf("Expected 'blocked' message, got: %s", result.ForLLM)
 	}
 }

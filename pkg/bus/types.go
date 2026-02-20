@@ -11,15 +11,17 @@ type InboundMessage struct {
 }
 
 const (
-	MessageTypeText   = "text"
-	MessageTypeTyping = "typing"
+	MessageTypeText     = "text"
+	MessageTypeTyping   = "typing"
+	MessageTypeReaction = "reaction"
 )
 
 type OutboundMessage struct {
-	Channel string `json:"channel"`
-	ChatID  string `json:"chat_id"`
-	Content string `json:"content"`
-	Type    string `json:"type,omitempty"`
+	Channel  string            `json:"channel"`
+	ChatID   string            `json:"chat_id"`
+	Content  string            `json:"content"`
+	Type     string            `json:"type,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type MessageHandler func(InboundMessage) error

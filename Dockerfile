@@ -20,7 +20,7 @@ RUN make build
 # ============================================================
 FROM python:3.14-alpine
 
-RUN apk add --no-cache ca-certificates tzdata git make ffmpeg curl wget nodejs npm jq github-cli
+RUN apk add --no-cache ca-certificates tzdata git make ffmpeg curl wget nodejs npm jq github-cli go gcc musl-dev openssl-dev pkgconfig rust cargo
 
 # Install MCP CLI, httpx and uv (for uvx support)
 RUN pip install --no-cache-dir "mcp[cli]" httpx uv

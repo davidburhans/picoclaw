@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 const (
@@ -60,7 +62,7 @@ func (p *BraveSearchProvider) Search(ctx context.Context, query string, count in
 
 	if err := json.Unmarshal(body, &searchResp); err != nil {
 		// Log error body for debugging
-		fmt.Printf("Brave API Error Body: %s\n", string(body))
+		logger.DebugCF("web", "Brave API Error Body", map[string]interface{}{"body": string(body)})
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
@@ -506,8 +508,14 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	// Limit reading to maxChars * 2 or a sensible default to prevent OOM
+	limit := int64(maxChars * 10) // Allow some headroom for HTML tags
+	if limit < 1024*1024*2 {
+		limit = 1024 * 1024 * 2 // Min 2MB
+	}
+	lr := io.LimitReader(resp.Body, limit)
+	body, err := io.ReadAll(lr)
+	if err != nil && err != io.EOF {
 		return ErrorResult(fmt.Sprintf("failed to read response: %v", err))
 	}
 

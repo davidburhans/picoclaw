@@ -57,6 +57,10 @@ func (p *ClaudeCliProvider) Chat(ctx context.Context, messages []Message, tools 
 	return p.parseClaudeCliResponse(stdout.String())
 }
 
+func (p *ClaudeCliProvider) GetID() string {
+	return "claude-cli:" + p.workspace
+}
+
 // GetDefaultModel returns the default model identifier.
 func (p *ClaudeCliProvider) GetDefaultModel() string {
 	return "claude-code"

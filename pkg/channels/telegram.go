@@ -364,7 +364,8 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		"peer_id":    peerID,
 	}
 
-	c.HandleMessage(fmt.Sprintf("%d", user.ID), fmt.Sprintf("%d", chatID), content, mediaPaths, metadata)
+	sessionKey := fmt.Sprintf("telegram:%d", chatID)
+	c.HandleMessage(fmt.Sprintf("%d", user.ID), fmt.Sprintf("%d", chatID), sessionKey, content, mediaPaths, metadata)
 	return nil
 }
 

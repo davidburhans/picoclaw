@@ -79,6 +79,10 @@ func (p *CodexCliProvider) Chat(ctx context.Context, messages []Message, tools [
 	return p.parseJSONLEvents(stdout.String())
 }
 
+func (p *CodexCliProvider) GetID() string {
+	return "codex-cli:" + p.workspace
+}
+
 // GetDefaultModel returns the default model identifier.
 func (p *CodexCliProvider) GetDefaultModel() string {
 	return "codex-cli"

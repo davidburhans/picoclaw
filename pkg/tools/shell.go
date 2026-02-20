@@ -18,6 +18,7 @@ import (
 
 type ExecTool struct {
 	workingDir          string
+	allowedPaths        []string
 	timeout             time.Duration
 	denyPatterns        []*regexp.Regexp
 	allowPatterns       []*regexp.Regexp
@@ -69,11 +70,11 @@ var defaultDenyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bsource\s+.*\.sh\b`),
 }
 
-func NewExecTool(workingDir string, restrict bool) *ExecTool {
-	return NewExecToolWithConfig(workingDir, restrict, nil)
+func NewExecTool(workingDir string, allowedPaths []string, restrict bool) *ExecTool {
+	return NewExecToolWithConfig(workingDir, allowedPaths, restrict, nil)
 }
 
-func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Config) *ExecTool {
+func NewExecToolWithConfig(workingDir string, allowedPaths []string, restrict bool, config *config.Config) *ExecTool {
 	denyPatterns := make([]*regexp.Regexp, 0)
 
 	enableDenyPatterns := true
@@ -104,6 +105,7 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 
 	return &ExecTool{
 		workingDir:          workingDir,
+		allowedPaths:        allowedPaths,
 		timeout:             60 * time.Second,
 		denyPatterns:        denyPatterns,
 		allowPatterns:       nil,
@@ -267,9 +269,17 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			return ""
 		}
 
-		// Stricter path pattern: catch anything that looks like an absolute path or a path with separators
-		// We want to be greedy here and check everything that might be a path.
-		pathPattern := regexp.MustCompile(`(/[a-zA-Z0-9._\-/]+)|([a-zA-Z]:\\[a-zA-Z0-9._\\/\-]+)`)
+		allowedAbs := make([]string, 0, len(t.allowedPaths))
+		for _, p := range t.allowedPaths {
+			if abs, err := filepath.Abs(config.ExpandHome(p)); err == nil {
+				allowedAbs = append(allowedAbs, abs)
+			}
+		}
+
+		// Stricter path pattern: catch anything that looks like an absolute path, 
+		// a path with separators, or something explicitly trying to go up levels.
+		// We use a more inclusive pattern to catch potential escapes.
+		pathPattern := regexp.MustCompile(`(/[a-zA-Z0-9._\-/]+)|([a-zA-Z]:\\[a-zA-Z0-9._\\/\-]+)|(\.\.[\\/])`)
 		matches := pathPattern.FindAllString(cmd, -1)
 
 		for _, raw := range matches {
@@ -283,14 +293,25 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 				continue
 			}
 
-			// Use the common validation logic if possible, or a local equivalent
+			// Check if it's within working dir OR any allowed external paths
+			isAllowed := false
 			rel, err := filepath.Rel(cwdPath, p)
-			if err != nil {
-				continue
+			if err == nil && !strings.HasPrefix(rel, "..") {
+				isAllowed = true
 			}
 
-			if strings.HasPrefix(rel, "..") {
-				return fmt.Sprintf("Command blocked by safety guard (path outside working dir: %s)", raw)
+			if !isAllowed {
+				for _, abs := range allowedAbs {
+					rel, err := filepath.Rel(abs, p)
+					if err == nil && !strings.HasPrefix(rel, "..") {
+						isAllowed = true
+						break
+					}
+				}
+			}
+
+			if !isAllowed {
+				return fmt.Sprintf("Command blocked by safety guard (path outside allowed directories: %s)", raw)
 			}
 		}
 	}

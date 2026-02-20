@@ -30,8 +30,8 @@ type CronTool struct {
 
 // NewCronTool creates a new CronTool
 // execTimeout: 0 means no timeout, >0 sets the timeout duration
-func NewCronTool(cronService *cron.CronService, executor JobExecutor, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration, config *config.Config) *CronTool {
-	execTool := NewExecToolWithConfig(workspace, restrict, config)
+func NewCronTool(cronService *cron.CronService, executor JobExecutor, msgBus *bus.MessageBus, workspace string, allowedPaths []string, restrict bool, execTimeout time.Duration, config *config.Config) *CronTool {
+	execTool := NewExecToolWithConfig(workspace, allowedPaths, restrict, config)
 	execTool.SetTimeout(execTimeout)
 	return &CronTool{
 		cronService: cronService,
@@ -335,7 +335,15 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		return fmt.Sprintf("Error: %v", err)
 	}
 
-	// Response is automatically sent via MessageBus by AgentLoop
-	_ = response // Will be sent by AgentLoop
+	// If response is not empty, publish it.
+	// Note: AgentLoop doesn't automatically publish responses from ProcessDirectWithChannel.
+	if response != "" {
+		t.msgBus.PublishOutbound(ctx, bus.OutboundMessage{
+			Channel: channel,
+			ChatID:  chatID,
+			Content: response,
+		})
+	}
+
 	return "ok"
 }
