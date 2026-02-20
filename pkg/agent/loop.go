@@ -22,6 +22,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/mailbox"
 	"github.com/sipeed/picoclaw/pkg/mcp"
@@ -40,6 +41,7 @@ type workspaceContext struct {
 	tools          *tools.ToolRegistry
 	sessions       *session.SessionManager
 	state          *state.Manager
+	cron           *cron.CronService
 	contextBuilder *ContextBuilder
 	mu             sync.Mutex // protects lazy init
 }
@@ -333,16 +335,8 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 		}
 	}
 
-	// Create tool registry for main agent
-	toolsRegistry := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
-
 	// Create subagent manager
 	subagentManager := tools.NewSubagentManager(al.provider, al.model, workspace, allowedPaths, al.bus)
-
-	// Register mailbox tools
-	wsName := al.config.ResolveWorkspaceName(workspace)
-	toolsRegistry.Register(tools.NewSendMessageTool(al.mailboxClient, wsName))
-	toolsRegistry.Register(tools.NewListWorkspacesTool(al.config))
 
 	// Apply subagent config
 	maxIterations := al.maxIterations
@@ -369,17 +363,53 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	}
 	subagentManager.SetTemperature(temp)
 
+	// Setup Cron service
+	cronStorePath := filepath.Join(workspace, "cron", "jobs.json") // Reverted to jobs.json
+	cronService := cron.NewCronService(cronStorePath, nil)
+	wctx.cron = cronService
+
+	execTimeout := time.Duration(al.config.Tools.Cron.ExecTimeoutMinutes) * time.Minute
+	cronTool := tools.NewCronTool(cronService, al, al.bus, workspace, allowedPaths, restrict, execTimeout, al.config)
+
+	// Set the onJob handler
+	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
+		result := cronTool.ExecuteJob(context.Background(), job)
+		return result, nil
+	})
+
+	if err := cronService.Start(); err != nil {
+		logger.ErrorCF("cron", "Failed to start cron service", map[string]interface{}{"workspace": workspace, "error": err.Error()})
+	}
+
+	// Helper to register specialized tools to a registry
+	registerSpecializedTools := func(registry *tools.ToolRegistry, isSubagent bool) {
+		// Mailbox tools
+		wsName := al.config.ResolveWorkspaceName(workspace)
+		registry.Register(tools.NewSendMessageTool(al.mailboxClient, wsName))
+		registry.Register(tools.NewListWorkspacesTool(al.config))
+
+		// Subagent management tools
+		registry.Register(tools.NewSpawnTool(subagentManager))
+		registry.Register(tools.NewSubagentTool(subagentManager, workspace, allowedPaths, restrict))
+
+		// Cron tool
+		registry.Register(cronTool)
+
+		if isSubagent {
+			registry.Register(&tools.ReportCompletionTool{})
+		} else {
+			// Session control (main agent only)
+			registry.Register(tools.NewSessionControlTool(&workspaceSessionController{al: al, wctx: wctx}))
+		}
+	}
+
+	// Create tool registries for main agent and subagents
+	toolsRegistry := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
+	registerSpecializedTools(toolsRegistry, false)
+
 	subagentTools := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
-	subagentTools.Register(&tools.ReportCompletionTool{})
+	registerSpecializedTools(subagentTools, true)
 	subagentManager.SetTools(subagentTools)
-
-	// Register spawn tool (for main agent)
-	spawnTool := tools.NewSpawnTool(subagentManager)
-	toolsRegistry.Register(spawnTool)
-
-	// Register subagent tool (synchronous execution)
-	subagentTool := tools.NewSubagentTool(subagentManager, workspace, allowedPaths, restrict)
-	toolsRegistry.Register(subagentTool)
 
 	wctx.sessions = session.NewSessionManager(filepath.Join(workspace, "sessions"))
 	wctx.state = state.NewManager(workspace)
@@ -429,9 +459,6 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	subagentManager.SetSkillsLoader(wctx.contextBuilder.GetSkillsLoader())
 
 	wctx.tools = toolsRegistry
-
-	// Register session control tool with workspace context wrapper
-	toolsRegistry.Register(tools.NewSessionControlTool(&workspaceSessionController{al: al, wctx: wctx}))
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
@@ -513,6 +540,9 @@ func (al *AgentLoop) Stop() {
 
 	for _, wctx := range al.workspaces {
 		wctx.mu.Lock()
+		if wctx.cron != nil {
+			wctx.cron.Stop()
+		}
 		if wctx.contextBuilder != nil && wctx.contextBuilder.mcpManager != nil {
 			wctx.contextBuilder.mcpManager.StopAll()
 		}

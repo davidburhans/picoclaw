@@ -776,10 +776,10 @@ func gatewayCmd() {
 		})
 
 	// Track services for multiple workspaces
-	var cronServices []*cron.CronService
 	var heartbeatServices []*heartbeat.HeartbeatService
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
+	_ = execTimeout // No longer used directly here
 
 	// Setup services for each workspace
 	workspacesToInit := initializeWorkspaces(cfg)
@@ -787,19 +787,7 @@ func gatewayCmd() {
 		logger.InfoCF("agent", "Initializing services for workspace", map[string]interface{}{"path": wsPath})
 
 		// 1. Setup cron tool and service
-		restrict := true
-		if cfg.Agents.Defaults.RestrictToWorkspace != nil {
-			restrict = *cfg.Agents.Defaults.RestrictToWorkspace
-		}
-		var allowedPaths []string
-		for _, ws := range cfg.Workspaces {
-			if config.ExpandHome(ws.Path) == wsPath {
-				allowedPaths = ws.AllowedExternalPaths
-				break
-			}
-		}
-		cs := setupCronTool(agentLoop, msgBus, wsPath, allowedPaths, restrict, execTimeout, cfg)
-		cronServices = append(cronServices, cs)
+		// cron setup is now handled internally by agentLoop.initWorkspaceContext
 
 		// 2. Setup heartbeat service
 		hs := heartbeat.NewHeartbeatService(
@@ -884,12 +872,7 @@ func gatewayCmd() {
 
 	// Services are started individually below
 
-	for _, cs := range cronServices {
-		if err := cs.Start(); err != nil {
-			fmt.Printf("Error starting cron service: %v\n", err)
-		}
-	}
-	fmt.Printf("✓ Cron services started (%d workspaces)\n", len(cronServices))
+	// cron services are started internally by agentLoop
 
 	for _, hs := range heartbeatServices {
 		if err := hs.Start(); err != nil {
@@ -935,9 +918,7 @@ func gatewayCmd() {
 	for _, hs := range heartbeatServices {
 		hs.Stop()
 	}
-	for _, cs := range cronServices {
-		cs.Stop()
-	}
+	// cron is stopped internally by agentLoop
 	agentLoop.Stop()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
@@ -1297,24 +1278,6 @@ func expandHome(path string) string {
 	return path
 }
 
-func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, allowedPaths []string, restrict bool, execTimeout time.Duration, config *config.Config) *cron.CronService {
-	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
-
-	// Create cron service
-	cronService := cron.NewCronService(cronStorePath, nil)
-
-	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, allowedPaths, restrict, execTimeout, config)
-	agentLoop.RegisterTool(cronTool)
-
-	// Set the onJob handler
-	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-		result := cronTool.ExecuteJob(context.Background(), job)
-		return result, nil
-	})
-
-	return cronService
-}
 
 func loadConfig() (*config.Config, error) {
 	return config.LoadConfig(getConfigPath())
