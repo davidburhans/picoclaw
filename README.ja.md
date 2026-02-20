@@ -176,15 +176,34 @@ picoclaw onboard
 
 ```json
 {
+  "model_list": [
+    {
+      "model_name": "gpt4",
+      "model": "openai/gpt-5.2",
+      "api_key": "sk-your-openai-key",
+      "api_base": "https://api.openai.com/v1"
+    }
+  ],
   "agents": {
     "defaults": {
-      "workspace": "~/.picoclaw/workspace",
-      "provider": "ollama/llama3", // 構文: provider[/instance]
-      "model": "",                // オプション: プロバイダー設定にフォールバック
-      "max_tokens": 0,            // オプション: プロバイダー設定にフォールバック
-      "temperature": 0,           // オプション: プロバイダー設定にフォールバック
-      "max_tool_iterations": 0    // オプション: プロバイダー設定にフォールバック
+<<<<<<< HEAD
+      "model": "gpt4"
     }
+  },
+  "tools": {
+    "web": {
+      "brave": {
+        "enabled": false,
+        "api_key": "YOUR_BRAVE_API_KEY",
+        "max_results": 5
+      },
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 5
+      }
+    }
+  }
+}
   },
   "providers": {
     "ollama": {
@@ -193,6 +212,16 @@ picoclaw onboard
         "api_base": "http://localhost:11434/v1",
         "max_tokens": 4096
       }
+=======
+      "model": "gpt4"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "YOUR_TELEGRAM_BOT_TOKEN",
+      "allow_from": []
+>>>>>>> og/main
     }
   }
 }
@@ -211,7 +240,7 @@ picoclaw onboard
 
 > **注意**: 完全な設定テンプレートは `config.example.json` を参照してください。
 
-**3. チャット**
+**4. チャット**
 
 ```bash
 picoclaw agent -m "What is 2+2?"
@@ -785,10 +814,10 @@ HEARTBEAT_OK 応答         ユーザーが直接結果を受け取る
   },
   "providers": {
     "openrouter": {
-      "apiKey": "sk-or-v1-xxx"
+      "api_key": "sk-or-v1-xxx"
     },
     "groq": {
-      "apiKey": "gsk_xxx"
+      "api_key": "gsk_xxx"
     }
   },
   "channels": {
@@ -807,17 +836,17 @@ HEARTBEAT_OK 応答         ユーザーが直接結果を受け取る
     },
     "feishu": {
       "enabled": false,
-      "appId": "cli_xxx",
-      "appSecret": "xxx",
-      "encryptKey": "",
-      "verificationToken": "",
+      "app_id": "cli_xxx",
+      "app_secret": "xxx",
+      "encrypt_key": "",
+      "verification_token": "",
       "allow_from": []
     }
   },
   "tools": {
     "web": {
       "search": {
-        "apiKey": "BSA..."
+        "api_key": "BSA..."
       }
     },
     "cron": {
@@ -1084,8 +1113,13 @@ Web 検索を有効にするには：
    {
      "tools": {
        "web": {
-         "search": {
+         "brave": {
+           "enabled": true,
            "api_key": "YOUR_BRAVE_API_KEY",
+           "max_results": 5
+         },
+         "duckduckgo": {
+           "enabled": true,
            "max_results": 5
          }
        }

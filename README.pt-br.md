@@ -215,15 +215,34 @@ picoclaw onboard
 
 ```json
 {
+  "model_list": [
+    {
+      "model_name": "gpt4",
+      "model": "openai/gpt-5.2",
+      "api_key": "sk-your-openai-key",
+      "api_base": "https://api.openai.com/v1"
+    }
+  ],
   "agents": {
     "defaults": {
-      "workspace": "~/.picoclaw/workspace",
-      "provider": "ollama/llama3", // Sintaxe: provider[/instance]
-      "model": "",                // Opcional: fallback para a configuração do provedor
-      "max_tokens": 0,            // Opcional: fallback para a configuração do provedor
-      "temperature": 0,           // Opcional: fallback para a configuração do provedor
-      "max_tool_iterations": 0    // Opcional: fallback para a configuração do provedor
+<<<<<<< HEAD
+      "model": "gpt4"
     }
+  },
+  "tools": {
+    "web": {
+      "brave": {
+        "enabled": false,
+        "api_key": "YOUR_BRAVE_API_KEY",
+        "max_results": 5
+      },
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 5
+      }
+    }
+  }
+}
   },
   "providers": {
     "ollama": {
@@ -231,6 +250,21 @@ picoclaw onboard
         "model": "llama3.2",
         "api_base": "http://localhost:11434/v1",
         "max_tokens": 4096
+=======
+      "model": "gpt4"
+    }
+  },
+  "tools": {
+    "web": {
+      "brave": {
+        "enabled": false,
+        "api_key": "YOUR_BRAVE_API_KEY",
+        "max_results": 5
+      },
+      "duckduckgo": {
+        "enabled": true,
+        "max_results": 5
+>>>>>>> og/main
       }
     }
   }
@@ -290,7 +324,7 @@ Converse com seu PicoClaw via Telegram, Discord, DingTalk, LINE ou WeCom.
     "telegram": {
       "enabled": true,
       "token": "YOUR_BOT_TOKEN",
-      "allowFrom": ["YOUR_USER_ID"]
+      "allow_from": ["YOUR_USER_ID"]
     }
   }
 }
@@ -333,7 +367,7 @@ picoclaw gateway
     "discord": {
       "enabled": true,
       "token": "YOUR_BOT_TOKEN",
-      "allowFrom": ["YOUR_USER_ID"]
+      "allow_from": ["YOUR_USER_ID"]
     }
   }
 }
@@ -788,6 +822,8 @@ O subagente tem acesso às ferramentas (message, web_search, etc.) e pode se com
 | `anthropic` (Em teste) | LLM (Claude direto) | [console.anthropic.com](https://console.anthropic.com) |
 | `openai` (Em teste) | LLM (GPT direto) | [platform.openai.com](https://platform.openai.com) |
 | `deepseek` (Em teste) | LLM (DeepSeek direto) | [platform.deepseek.com](https://platform.deepseek.com) |
+| `qwen` | Alibaba Qwen | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+| `cerebras` | Cerebras | [cerebras.ai](https://cerebras.ai) |
 | `groq` | LLM + **Transcrição de voz** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `schedule` | Agendamento de modelos baseado em tempo | (Nenhum) |
 | `overflow` | Roteamento de fallback (Fallback Routing) | (No config.json) |
@@ -1174,7 +1210,7 @@ Adicione a key em `~/.picoclaw/config.json` se usar o Brave:
   "tools": {
     "web": {
       "brave": {
-        "enabled": true,
+        "enabled": false,
         "api_key": "YOUR_BRAVE_API_KEY",
         "max_results": 5
       },
@@ -1205,3 +1241,4 @@ Isso acontece quando outra instância do bot está em execução. Certifique-se 
 | **Zhipu** | 200K tokens/mês | Melhor para usuários chineses |
 | **Brave Search** | 2000 consultas/mês | Funcionalidade de busca web |
 | **Groq** | Plano gratuito disponível | Inferência ultra-rápida (Llama, Mixtral) |
+| **Cerebras** | Plano gratuito disponível | Inferência ultra-rápida (Llama 3.3 70B) |
