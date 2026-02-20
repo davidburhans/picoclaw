@@ -24,6 +24,7 @@ type ContextBuilder struct {
 	memory       *MemoryStore
 	tools        *tools.ToolRegistry // Direct reference to tool registry
 	mcpManager   *mcp.MCPManager     // Direct reference to MCP manager
+	userContext  string
 }
 
 func getGlobalConfigDir() string {
@@ -60,6 +61,11 @@ func (cb *ContextBuilder) SetMCPManager(manager *mcp.MCPManager) {
 	cb.mcpManager = manager
 }
 
+// SetUserContext sets the user context for the agent (birth year, safety level, etc.)
+func (cb *ContextBuilder) SetUserContext(context string) {
+	cb.userContext = context
+}
+
 func (cb *ContextBuilder) getIdentity() string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
@@ -76,6 +82,9 @@ You are %s, a helpful AI assistant.
 %s
 
 ## Runtime
+%s
+
+## User Context
 %s
 
 ## Workspace
@@ -97,7 +106,7 @@ You can suggest these commands to the user when appropriate:
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
 3. **Memory** - When remembering something, write to %s/memory/MEMORY.md`,
-		cb.agentName, cb.agentName, now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+		cb.agentName, cb.agentName, now, runtime, cb.userContext, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {

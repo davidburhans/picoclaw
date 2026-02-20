@@ -28,6 +28,8 @@ services:
       dockerfile: Dockerfile
     container_name: picoclaw-gateway
     restart: unless-stopped
+    env_file:
+      - .env
     profiles:
       - gateway
     volumes:

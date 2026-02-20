@@ -30,6 +30,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/memory/embedding"
 	"github.com/sipeed/picoclaw/pkg/memory/qdrant"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/safety"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -102,8 +103,16 @@ type processOptions struct {
 
 // createToolRegistry creates a tool registry with common tools.
 // This is shared between main agent and subagents.
-func createToolRegistry(workspace string, allowedPaths []string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus, memoryManager *memory.Manager) *tools.ToolRegistry {
+func createToolRegistry(workspace, workspaceName string, allowedPaths []string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus, memoryManager *memory.Manager) *tools.ToolRegistry {
 	registry := tools.NewToolRegistry()
+
+	// Set up tool filtering based on workspace config
+	if workspaceName != "" {
+		allowedTools, restrictedTools := tools.GetWorkspaceToolConfig(cfg, workspaceName)
+		if len(allowedTools) > 0 || len(restrictedTools) > 0 {
+			registry.SetToolFilter(tools.NewToolFilter(allowedTools, restrictedTools))
+		}
+	}
 
 	// File system tools
 	registry.Register(tools.NewReadFileTool(workspace, allowedPaths, restrict))
@@ -388,12 +397,37 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 		logger.ErrorCF("cron", "Failed to start cron service", map[string]interface{}{"workspace": workspace, "error": err.Error()})
 	}
 
+	wsName := al.config.ResolveWorkspaceName(workspace)
+
 	// Helper to register specialized tools to a registry
 	registerSpecializedTools := func(registry *tools.ToolRegistry, isSubagent bool) {
 		// Mailbox tools
-		wsName := al.config.ResolveWorkspaceName(workspace)
 		registry.Register(tools.NewSendMessageTool(al.mailboxClient, wsName))
 		registry.Register(tools.NewListWorkspacesTool(al.config))
+
+		// Family tools
+		familyPath := al.config.ResolveFamilyPath()
+
+		// Check canManageFamily for parent-only operations
+		canManageFamily := false
+		if wsConfig := al.config.GetWorkspaceConfig(wsName); wsConfig != nil {
+			canManageFamily = wsConfig.CanManageFamily
+		}
+
+		// List tools
+		registry.Register(tools.NewAddToListTool(workspace, familyPath, wsName))
+		registry.Register(tools.NewGetListTool(workspace, familyPath))
+		registry.Register(tools.NewRemoveFromListTool(workspace, familyPath))
+		registry.Register(tools.NewCreateListTool(workspace, familyPath, wsName, canManageFamily))
+		registry.Register(tools.NewDeleteListTool(workspace, familyPath, canManageFamily))
+		registry.Register(tools.NewListListsTool(workspace, familyPath))
+
+		// Chore tools
+		registry.Register(tools.NewAssignChoreTool(familyPath, wsName, canManageFamily))
+		registry.Register(tools.NewCompleteChoreTool(familyPath, wsName))
+		registry.Register(tools.NewVerifyChoreTool(familyPath, wsName, canManageFamily))
+		registry.Register(tools.NewListChoresTool(familyPath))
+		registry.Register(tools.NewDeleteChoreTool(familyPath, canManageFamily))
 
 		// Subagent management tools
 		registry.Register(tools.NewSpawnTool(subagentManager))
@@ -411,10 +445,10 @@ func (al *AgentLoop) initWorkspaceContext(wctx *workspaceContext) {
 	}
 
 	// Create tool registries for main agent and subagents
-	toolsRegistry := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
+	toolsRegistry := createToolRegistry(workspace, wsName, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
 	registerSpecializedTools(toolsRegistry, false)
 
-	subagentTools := createToolRegistry(workspace, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
+	subagentTools := createToolRegistry(workspace, wsName, allowedPaths, restrict, al.config, al.bus, al.memoryManager)
 	registerSpecializedTools(subagentTools, true)
 	subagentManager.SetTools(subagentTools)
 
@@ -511,6 +545,9 @@ func (al *AgentLoop) handleInboundMessage(ctx context.Context, msg bus.InboundMe
 	}
 
 	if response != "" {
+		// Check safety filter before sending response
+		response = al.checkSafety(msg.SenderID, response)
+
 		// Check if the message tool already sent a response during this round.
 		// If so, skip publishing to avoid duplicate messages to the user.
 		alreadySent := false
@@ -528,6 +565,38 @@ func (al *AgentLoop) handleInboundMessage(ctx context.Context, msg bus.InboundMe
 			})
 		}
 	}
+}
+
+func (al *AgentLoop) checkSafety(senderID, response string) string {
+	workspace := al.config.ResolveWorkspace(senderID)
+	wsName := al.config.ResolveWorkspaceName(workspace)
+	wsConfig := al.config.GetWorkspaceConfig(wsName)
+
+	if wsConfig == nil {
+		return response
+	}
+
+	filter := safety.NewFilter(wsConfig.SafetyLevel, wsConfig.BirthYear)
+	result := filter.CheckResponse(response)
+
+	if result.Blocked {
+		logger.InfoCF("safety", "Content blocked",
+			map[string]interface{}{
+				"workspace": wsName,
+				"reason":    result.Reason,
+			})
+		return result.BlockedMessage
+	}
+
+	if result.NeedsApproval {
+		logger.InfoCF("safety", "Content needs approval",
+			map[string]interface{}{
+				"workspace": wsName,
+				"reason":    result.Reason,
+			})
+	}
+
+	return response
 }
 
 func (al *AgentLoop) Stop() {

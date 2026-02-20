@@ -11,14 +11,21 @@ import (
 )
 
 type ToolRegistry struct {
-	tools map[string]Tool
-	mu    sync.RWMutex
+	tools      map[string]Tool
+	toolFilter *ToolFilter
+	mu         sync.RWMutex
 }
 
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]Tool),
 	}
+}
+
+func (r *ToolRegistry) SetToolFilter(filter *ToolFilter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.toolFilter = filter
 }
 
 func (r *ToolRegistry) Register(tool Tool) {
@@ -47,6 +54,18 @@ func (r *ToolRegistry) ExecuteWithContext(ctx context.Context, name string, args
 			"tool": name,
 			"args": args,
 		})
+
+	// Check tool filter if set
+	r.mu.RLock()
+	filter := r.toolFilter
+	r.mu.RUnlock()
+	if filter != nil && !filter.IsAllowed(name) {
+		logger.WarnCF("tool", "Tool blocked by workspace filter",
+			map[string]interface{}{
+				"tool": name,
+			})
+		return ErrorResult(fmt.Sprintf("tool %q is not available in this workspace", name))
+	}
 
 	tool, ok := r.Get(name)
 	if !ok {

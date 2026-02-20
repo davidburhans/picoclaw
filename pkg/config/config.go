@@ -106,6 +106,12 @@ type WorkspaceConfig struct {
 	Users                FlexibleStringSlice `json:"users" env:"PICOCLAW_WORKSPACES_{{.Name}}_USERS"`
 	RestrictToWorkspace  *bool               `json:"restrict_to_workspace"`
 	AllowedExternalPaths []string            `json:"allowed_external_paths"`
+
+	BirthYear       int      `json:"birth_year" env:"PICOCLAW_WORKSPACES_{{.Name}}_BIRTH_YEAR"`
+	SafetyLevel     string   `json:"safety_level" env:"PICOCLAW_WORKSPACES_{{.Name}}_SAFETY_LEVEL"`
+	AllowedTools    []string `json:"allowed_tools" env:"PICOCLAW_WORKSPACES_{{.Name}}_ALLOWED_TOOLS"`
+	RestrictedTools []string `json:"restricted_tools" env:"PICOCLAW_WORKSPACES_{{.Name}}_RESTRICTED_TOOLS"`
+	CanManageFamily bool     `json:"can_manage_family" env:"PICOCLAW_WORKSPACES_{{.Name}}_CAN_MANAGE_FAMILY"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -803,7 +809,6 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-
 	if err := cfg.ValidateModelList(); err != nil {
 		return nil, err
 	}
@@ -846,7 +851,6 @@ func (c *Config) ResolveWorkspace(senderID string) string {
 	return c.WorkspacePath()
 }
 
-
 func (c *Config) ResolveWorkspaceName(path string) string {
 	path = utils.ExpandHome(path)
 	for name, ws := range c.Workspaces {
@@ -875,6 +879,19 @@ func (c *Config) ResolveMailboxPath() string {
 		return utils.ExpandHome(c.Mailbox.Path)
 	}
 	return filepath.Join(utils.ExpandHome("~/.picoclaw"), "mailbox")
+}
+
+// ResolveFamilyPath returns the path to the shared family data directory.
+func (c *Config) ResolveFamilyPath() string {
+	return filepath.Join(utils.ExpandHome("~/.picoclaw"), "family")
+}
+
+// GetWorkspaceConfig returns the WorkspaceConfig for a given workspace name.
+func (c *Config) GetWorkspaceConfig(workspaceName string) *WorkspaceConfig {
+	if ws, ok := c.Workspaces[workspaceName]; ok {
+		return &ws
+	}
+	return nil
 }
 
 func (c *Config) ResolveRestrictToWorkspace(senderID string) bool {
@@ -925,7 +942,6 @@ func (c *Config) findMatches(modelName string) []ModelConfig {
 	}
 	return matches
 }
-
 
 // ValidateModelList validates all ModelConfig entries in the model_list.
 func (c *Config) ValidateModelList() error {

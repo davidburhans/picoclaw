@@ -637,6 +637,87 @@ PicoClaw supports hosting multiple users with complete isolation. Each user (ide
 - **Isolated Services**: Each workspace runs its own `HeartbeatService` and `CronService`.
 - **Automatic Routing**: Inbound messages are automatically routed to the correct workspace context based on the sender ID.
 
+### 👨‍👩‍👧‍👦 Family Mode
+
+PicoClaw supports family households with per-user workspaces, shared family lists, and child safety features.
+
+#### Configuration Example
+
+```json
+{
+  "workspaces": {
+    "dave": {
+      "path": "~/.picoclaw/workspace_dave",
+      "users": ["telegram:123"],
+      "birth_year": 1980,
+      "safety_level": "off",
+      "can_manage_family": true
+    },
+    "jackie": {
+      "path": "~/.picoclaw/workspace_jackie",
+      "users": ["telegram:456"],
+      "birth_year": 1982,
+      "safety_level": "low"
+    },
+    "timmy": {
+      "path": "~/.picoclaw/workspace_timmy",
+      "users": ["telegram:789"],
+      "birth_year": 2015,
+      "safety_level": "high",
+      "restricted_tools": ["exec", "web_fetch"]
+    }
+  }
+}
+```
+
+#### Family Configuration Options
+
+| Option | Description |
+|--------|-------------|
+| `birth_year` | User's birth year for age-appropriate responses |
+| `safety_level` | Content filter: `off`, `low`, `medium`, `high` |
+| `allowed_tools` | Allowlist of tools (if set, only these are available) |
+| `restricted_tools` | Blocklist of tools (always unavailable) |
+| `can_manage_family` | `true` allows managing shared family lists and chores |
+
+#### Safety Levels
+
+- **off**: No content filtering
+- **low**: Block explicit harmful content
+- **medium**: Block + redirect inappropriate topics
+- **high**: Strict filtering + sensitive topics flagged for parent review
+
+Safety works with birth year - a 2018-born with `high` is more protected than a 1980-born with `high`.
+
+#### Family Tools
+
+| Tool | Description |
+|------|-------------|
+| `add_to_list` | Add item to personal or family list |
+| `get_list` | View list items |
+| `remove_from_list` | Remove item from list |
+| `create_list` | Create new list (family requires `can_manage_family`) |
+| `delete_list` | Delete list (family requires `can_manage_family`) |
+| `list_chores` | View assigned chores |
+| `assign_chore` | Assign chore to family member (parent only) |
+| `complete_chore` | Mark chore as done |
+| `verify_chore` | Parent approval of completed chore |
+
+Use `scope: "personal"` or `scope: "family"` to specify list/chore ownership.
+
+#### Storage Layout
+
+```
+~/.picoclaw/
+├── workspace_dave/lists/     # Personal lists (private)
+├── workspace_timmy/lists/    # Personal lists (private)
+├── family/
+│   ├── lists/               # Shared family lists
+│   │   └── groceries.json
+│   └── chores.json          # Family chores
+└── mailbox/                 # Cross-workspace messages
+```
+
 ### 🔒 Security Sandbox
 
 PicoClaw runs in a sandboxed environment by default. The agent can only access files and execute commands within the configured workspace.
