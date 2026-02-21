@@ -78,8 +78,33 @@ type MailboxConfig struct {
 }
 
 type VoiceConfig struct {
-	Model    string `json:"model" env:"PICOCLAW_VOICE_MODEL"`
-	Language string `json:"language" env:"PICOCLAW_VOICE_LANGUAGE"`
+	TTS TTSConfig `json:"tts"`
+	STT STTConfig `json:"stt"`
+}
+
+type STTConfig struct {
+	Enabled  bool   `json:"enabled" env:"PICOCLAW_VOICE_STT_ENABLED"`
+	APIBase  string `json:"api_base" env:"PICOCLAW_VOICE_STT_API_BASE"`
+	APIKey   string `json:"api_key" env:"PICOCLAW_VOICE_STT_API_KEY"`
+	Model    string `json:"model" env:"PICOCLAW_VOICE_STT_MODEL"`
+	Language string `json:"language" env:"PICOCLAW_VOICE_STT_LANGUAGE"`
+}
+
+type TTSConfig struct {
+	Enabled      bool    `json:"enabled" env:"PICOCLAW_VOICE_TTS_ENABLED"`
+	ServerURL    string  `json:"server_url" env:"PICOCLAW_VOICE_TTS_SERVER_URL"`
+	VoiceID      string  `json:"voice_id" env:"PICOCLAW_VOICE_TTS_VOICE_ID"`
+	Language     string  `json:"language" env:"PICOCLAW_VOICE_TTS_LANGUAGE"`
+	Temperature  float64 `json:"temperature" env:"PICOCLAW_VOICE_TTS_TEMPERATURE"`
+	Exaggeration float64 `json:"exaggeration" env:"PICOCLAW_VOICE_TTS_EXAGGERATION"`
+	CfgWeight    float64 `json:"cfg_weight" env:"PICOCLAW_VOICE_TTS_CFG_WEIGHT"`
+	SpeedFactor  float64 `json:"speed_factor" env:"PICOCLAW_VOICE_TTS_SPEED_FACTOR"`
+	Seed         int     `json:"seed" env:"PICOCLAW_VOICE_TTS_SEED"`
+	ChunkSize    int     `json:"chunk_size" env:"PICOCLAW_VOICE_TTS_CHUNK_SIZE"`
+	SplitText    bool    `json:"split_text" env:"PICOCLAW_VOICE_TTS_SPLIT_TEXT"`
+	OutputFormat string  `json:"output_format" env:"PICOCLAW_VOICE_TTS_OUTPUT_FORMAT"`
+	AutoPlay     bool    `json:"auto_play" env:"PICOCLAW_VOICE_TTS_AUTO_PLAY"`
+	IncludeText  bool    `json:"include_text" env:"PICOCLAW_VOICE_TTS_INCLUDE_TEXT"`
 }
 
 type MemoryConfig struct {
@@ -792,8 +817,26 @@ func DefaultConfig() *Config {
 			},
 		},
 		Voice: VoiceConfig{
-			Model:    "",
-			Language: "auto",
+			STT: STTConfig{
+				Enabled:  false,
+				Language: "auto",
+			},
+			TTS: TTSConfig{
+				Enabled:      false,
+				ServerURL:    "http://localhost:8004",
+				VoiceID:      "Emily.wav",
+				Language:     "en",
+				Temperature:  0.8,
+				Exaggeration: 0.4,
+				CfgWeight:    0.5,
+				SpeedFactor:  1.0,
+				Seed:         42,
+				ChunkSize:    240,
+				SplitText:    true,
+				OutputFormat: "wav",
+				AutoPlay:     false,
+				IncludeText:  true,
+			},
 		},
 	}
 }

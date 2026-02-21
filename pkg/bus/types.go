@@ -14,6 +14,7 @@ const (
 	MessageTypeText     = "text"
 	MessageTypeTyping   = "typing"
 	MessageTypeReaction = "reaction"
+	MessageTypeAudio    = "audio"
 )
 
 type OutboundMessage struct {
@@ -22,6 +23,7 @@ type OutboundMessage struct {
 	Content  string            `json:"content"`
 	Type     string            `json:"type,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	Audio    string            `json:"audio,omitempty"`
 }
 
 type MessageHandler func(InboundMessage) error

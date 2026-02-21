@@ -36,54 +36,36 @@ type STTTranscriber struct {
 	httpClient *http.Client
 }
 
-func NewTranscriber(modelCfg *config.ModelConfig, voiceCfg *config.VoiceConfig) Transcriber {
-	if modelCfg == nil || modelCfg.ModelName == "" {
-		logger.DebugCF("voice", "No voice model configured, transcriber unavailable", nil)
+func NewTranscriber(sttCfg *config.STTConfig) Transcriber {
+	if sttCfg == nil || !sttCfg.Enabled || sttCfg.APIBase == "" {
+		logger.DebugCF("voice", "STT not configured or disabled", nil)
 		return &STTTranscriber{
-			apiKey:     "",
-			apiBase:    "",
-			model:      "",
-			language:   "",
 			httpClient: &http.Client{Timeout: 60 * time.Second},
 		}
 	}
 
-	apiBase := modelCfg.BaseURL
-	if apiBase == "" {
-		apiBase = modelCfg.APIBase
-	}
-
-	language := voiceCfg.Language
+	language := sttCfg.Language
 	if language == "" {
 		language = "auto"
 	}
 
+	model := sttCfg.Model
+	if model == "" {
+		model = "whisper-large-v3"
+	}
+
 	logger.DebugCF("voice", "Creating STT transcriber", map[string]interface{}{
-		"model_name":  modelCfg.ModelName,
-		"model":       modelCfg.Model,
-		"provider":    modelCfg.Provider,
-		"api_base":    apiBase,
-		"has_api_key": modelCfg.APIKey != "",
+		"model":       model,
+		"api_base":    sttCfg.APIBase,
+		"has_api_key": sttCfg.APIKey != "",
 		"language":    language,
 	})
 
 	return &STTTranscriber{
-		apiKey:     modelCfg.APIKey,
-		apiBase:    apiBase,
-		model:      modelCfg.Model,
+		apiKey:     sttCfg.APIKey,
+		apiBase:    sttCfg.APIBase,
+		model:      model,
 		language:   language,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
-	}
-}
-
-func NewGroqTranscriber(apiKey string) *STTTranscriber {
-	logger.DebugCF("voice", "Creating Groq transcriber (legacy)", map[string]interface{}{"has_api_key": apiKey != ""})
-
-	return &STTTranscriber{
-		apiKey:     apiKey,
-		apiBase:    "https://api.groq.com/openai/v1",
-		model:      "whisper-large-v3",
-		language:   "",
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }

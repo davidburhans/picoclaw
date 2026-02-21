@@ -7,68 +7,77 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
-func TestNewTranscriber_WithModelConfig(t *testing.T) {
-	modelCfg := &config.ModelConfig{
-		ModelName: "whisper-local",
-		Model:     "large-v3",
-		Provider:  "stt",
-		APIBase:   "http://localhost:8000/v1",
-		APIKey:    "",
+func TestNewTranscriber_WithSTTConfig(t *testing.T) {
+	sttCfg := &config.STTConfig{
+		Enabled:  true,
+		APIBase:  "http://localhost:8000/v1",
+		APIKey:   "test-key",
+		Model:    "whisper-large-v3",
+		Language: "en",
 	}
 
-	voiceCfg := &config.VoiceConfig{
-		Model:    "whisper-local",
-		Language: "auto",
-	}
-
-	transcriber := NewTranscriber(modelCfg, voiceCfg)
+	transcriber := NewTranscriber(sttCfg)
 
 	if !transcriber.IsAvailable() {
-		t.Error("Expected transcriber to be available with valid api_base")
+		t.Error("Expected transcriber to be available with valid STT config")
 	}
 }
 
 func TestNewTranscriber_NilConfig(t *testing.T) {
-	voiceCfg := &config.VoiceConfig{
-		Model:    "",
-		Language: "auto",
-	}
-
-	transcriber := NewTranscriber(nil, voiceCfg)
+	transcriber := NewTranscriber(nil)
 
 	if transcriber.IsAvailable() {
 		t.Error("Expected transcriber to NOT be available with nil config")
 	}
 }
 
-func TestNewTranscriber_EmptyModel(t *testing.T) {
-	modelCfg := &config.ModelConfig{
-		ModelName: "",
-		Model:     "",
-		Provider:  "stt",
+func TestNewTranscriber_Disabled(t *testing.T) {
+	sttCfg := &config.STTConfig{
+		Enabled: false,
+		APIBase: "http://localhost:8000/v1",
+		APIKey:  "test-key",
+		Model:   "whisper-large-v3",
 	}
 
-	voiceCfg := &config.VoiceConfig{
-		Model:    "",
-		Language: "auto",
-	}
-
-	transcriber := NewTranscriber(modelCfg, voiceCfg)
+	transcriber := NewTranscriber(sttCfg)
 
 	if transcriber.IsAvailable() {
-		t.Error("Expected transcriber to NOT be available with empty model config")
+		t.Error("Expected transcriber to NOT be available when disabled")
 	}
 }
 
-func TestNewTranscriber_LegacyGroq(t *testing.T) {
-	transcriber := NewGroqTranscriber("test-api-key")
-
-	if !transcriber.IsAvailable() {
-		t.Error("Expected legacy Groq transcriber to be available with API key")
+func TestNewTranscriber_EmptyAPIBase(t *testing.T) {
+	sttCfg := &config.STTConfig{
+		Enabled: true,
+		APIBase: "",
+		APIKey:  "test-key",
+		Model:   "whisper-large-v3",
 	}
 
-	if transcriber.apiBase != "https://api.groq.com/openai/v1" {
-		t.Errorf("Expected apiBase to be Groq URL, got %s", transcriber.apiBase)
+	transcriber := NewTranscriber(sttCfg)
+
+	if transcriber.IsAvailable() {
+		t.Error("Expected transcriber to NOT be available with empty api_base")
+	}
+}
+
+func TestNewTranscriber_DefaultModel(t *testing.T) {
+	sttCfg := &config.STTConfig{
+		Enabled: true,
+		APIBase: "https://api.groq.com/openai/v1",
+		APIKey:  "test-key",
+		Model:   "", // should default to whisper-large-v3
+	}
+
+	transcriber := NewTranscriber(sttCfg)
+
+	if !transcriber.IsAvailable() {
+		t.Error("Expected transcriber to be available")
+	}
+
+	stt := transcriber.(*STTTranscriber)
+	if stt.model != "whisper-large-v3" {
+		t.Errorf("Expected default model whisper-large-v3, got %s", stt.model)
 	}
 }
 

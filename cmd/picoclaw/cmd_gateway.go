@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -107,28 +106,13 @@ func gatewayCmd() {
 
 	var transcriber voice.Transcriber
 
-	// Resolve voice model from config
-	if cfg.Voice.Model != "" {
-		modelCfg, err := cfg.GetModelConfig(cfg.Voice.Model)
-		if err != nil {
-			logger.WarnCF("voice", "Voice model not found in model_list", map[string]interface{}{"model": cfg.Voice.Model, "error": err})
-		} else {
-			transcriber = voice.NewTranscriber(modelCfg, &cfg.Voice)
-			logger.InfoCF("voice", "Voice transcription configured", map[string]interface{}{
-				"model":    cfg.Voice.Model,
-				"provider": modelCfg.Provider,
-				"api_base": modelCfg.BaseURL,
-			})
-		}
-	} else {
-		// Fallback: Find Groq API key from ModelList (legacy behavior)
-		for _, m := range cfg.ModelList {
-			if strings.HasPrefix(m.Model, "groq/") && m.APIKey != "" {
-				transcriber = voice.NewGroqTranscriber(m.APIKey)
-				logger.InfoC("voice", "Groq voice transcription enabled (legacy)")
-				break
-			}
-		}
+	// Initialize STT transcriber from voice.stt config
+	if cfg.Voice.STT.Enabled {
+		transcriber = voice.NewTranscriber(&cfg.Voice.STT)
+		logger.InfoCF("voice", "Voice transcription configured", map[string]interface{}{
+			"model":    cfg.Voice.STT.Model,
+			"api_base": cfg.Voice.STT.APIBase,
+		})
 	}
 
 	if transcriber != nil && transcriber.IsAvailable() {
@@ -154,6 +138,35 @@ func gatewayCmd() {
 			if oc, ok := onebotChannel.(*channels.OneBotChannel); ok {
 				oc.SetTranscriber(transcriber)
 				logger.InfoC("voice", "Transcription attached to OneBot channel")
+			}
+		}
+	}
+
+	// Initialize TTS synthesizer
+	var synthesizer voice.Synthesizer
+	if cfg.Voice.TTS.Enabled {
+		synthesizer = voice.NewSynthesizer(&cfg.Voice.TTS)
+		if synthesizer != nil && synthesizer.IsAvailable() {
+			logger.InfoCF("voice", "TTS synthesis configured", map[string]interface{}{
+				"server_url": cfg.Voice.TTS.ServerURL,
+				"voice_id":   cfg.Voice.TTS.VoiceID,
+				"auto_play":  cfg.Voice.TTS.AutoPlay,
+			})
+			// Attach synthesizer to Telegram
+			if telegramChannel, ok := channelManager.GetChannel("telegram"); ok {
+				if tc, ok := telegramChannel.(*channels.TelegramChannel); ok {
+					tc.SetSynthesizer(synthesizer)
+					tc.SetIncludeTextWithVoice(cfg.Voice.TTS.IncludeText)
+					logger.InfoC("voice", "TTS attached to Telegram channel")
+				}
+			}
+			// Attach synthesizer to Discord
+			if discordChannel, ok := channelManager.GetChannel("discord"); ok {
+				if dc, ok := discordChannel.(*channels.DiscordChannel); ok {
+					dc.SetSynthesizer(synthesizer)
+					dc.SetIncludeTextWithVoice(cfg.Voice.TTS.IncludeText)
+					logger.InfoC("voice", "TTS attached to Discord channel")
+				}
 			}
 		}
 	}
