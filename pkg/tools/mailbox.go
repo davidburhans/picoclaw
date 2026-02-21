@@ -9,8 +9,8 @@ import (
 )
 
 type SendMessageTool struct {
-	client       *mailbox.Client
-	from         string
+	client *mailbox.Client
+	from   string
 }
 
 func NewSendMessageTool(client *mailbox.Client, from string) *SendMessageTool {
@@ -80,7 +80,7 @@ func (t *ListWorkspacesTool) Description() string {
 
 func (t *ListWorkspacesTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "object",
+		"type":       "object",
 		"properties": map[string]interface{}{},
 	}
 }

@@ -68,12 +68,18 @@ type Config struct {
 	Devices    DevicesConfig              `json:"devices"`
 	Memory     MemoryConfig               `json:"memory"`
 	Mailbox    MailboxConfig              `json:"mailbox"`
+	Voice      VoiceConfig                `json:"voice"`
 	Schedules  ScheduleEntries            `json:"schedules"`
 	mu         sync.RWMutex
 }
 
 type MailboxConfig struct {
 	Path string `json:"path" env:"PICOCLAW_MAILBOX_PATH"`
+}
+
+type VoiceConfig struct {
+	Model    string `json:"model" env:"PICOCLAW_VOICE_MODEL"`
+	Language string `json:"language" env:"PICOCLAW_VOICE_LANGUAGE"`
 }
 
 type MemoryConfig struct {
@@ -784,6 +790,10 @@ func DefaultConfig() *Config {
 				URL:            "http://localhost:6333",
 				CollectionName: "picoclaw",
 			},
+		},
+		Voice: VoiceConfig{
+			Model:    "",
+			Language: "auto",
 		},
 	}
 }

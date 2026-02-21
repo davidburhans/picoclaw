@@ -212,7 +212,7 @@ func TestShellTool_RestrictToWorkspace(t *testing.T) {
 func TestShellTool_AllowedExternalPaths(t *testing.T) {
 	tmpDir := t.TempDir()
 	externalDir := t.TempDir()
-	
+
 	testFile := filepath.Join(externalDir, "external.txt")
 	os.WriteFile(testFile, []byte("external content"), 0644)
 
@@ -220,17 +220,17 @@ func TestShellTool_AllowedExternalPaths(t *testing.T) {
 	tool := NewExecTool(tmpDir, []string{externalDir}, true)
 
 	ctx := context.Background()
-	
+
 	// Should allow command referencing externalDir
 	args := map[string]interface{}{
 		"command": "cat " + testFile,
 	}
 	result := tool.Execute(ctx, args)
-	
+
 	if result.IsError {
 		t.Errorf("Expected success for allowed external path, got error: %s", result.ForLLM)
 	}
-	
+
 	if !strings.Contains(result.ForUser, "external content") {
 		t.Errorf("Expected content from external path, got: %s", result.ForUser)
 	}
@@ -239,16 +239,16 @@ func TestShellTool_AllowedExternalPaths(t *testing.T) {
 	forbiddenDir := t.TempDir()
 	forbiddenFile := filepath.Join(forbiddenDir, "forbidden.txt")
 	os.WriteFile(forbiddenFile, []byte("secret"), 0644)
-	
+
 	args = map[string]interface{}{
 		"command": "cat " + forbiddenFile,
 	}
 	result = tool.Execute(ctx, args)
-	
+
 	if !result.IsError {
 		t.Errorf("Expected error for forbidden external path, got success")
 	}
-	
+
 	if !strings.Contains(result.ForLLM, "blocked") {
 		t.Errorf("Expected 'blocked' message, got: %s", result.ForLLM)
 	}

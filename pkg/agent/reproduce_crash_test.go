@@ -29,13 +29,13 @@ func (m *slowMockProvider) Chat(ctx context.Context, messages []providers.Messag
 	}, nil
 }
 
-func (m *slowMockProvider) GetDefaultModel() string { return "mock-model" }
-func (m *slowMockProvider) GetMaxTokens() int { return 4096 }
-func (m *slowMockProvider) GetTemperature() float64 { return 0.7 }
+func (m *slowMockProvider) GetDefaultModel() string   { return "mock-model" }
+func (m *slowMockProvider) GetMaxTokens() int         { return 4096 }
+func (m *slowMockProvider) GetTemperature() float64   { return 0.7 }
 func (m *slowMockProvider) GetMaxToolIterations() int { return 10 }
-func (m *slowMockProvider) GetTimeout() int { return 10 } // Short timeout for test
-func (m *slowMockProvider) GetMaxConcurrent() int { return 10 }
-func (m *slowMockProvider) GetID() string { return "slow-mock-id" }
+func (m *slowMockProvider) GetTimeout() int           { return 10 } // Short timeout for test
+func (m *slowMockProvider) GetMaxConcurrent() int     { return 10 }
+func (m *slowMockProvider) GetID() string             { return "slow-mock-id" }
 
 func TestAgentLoop_ConcurrentSummarization(t *testing.T) {
 	// Create temp workspace
@@ -62,7 +62,7 @@ func TestAgentLoop_ConcurrentSummarization(t *testing.T) {
 	al := NewAgentLoop(cfg, msgBus, provider)
 
 	sessionKey := "concurrent_session"
-	
+
 	// 1. Populate session with many messages to trigger summarization
 	// Threshold is > 20 messages
 	history := make([]providers.Message, 0, 25)

@@ -7,7 +7,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
-
 func TestCreateProviderReturnsHTTPProviderForOpenRouter(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.Model = "test-openrouter"

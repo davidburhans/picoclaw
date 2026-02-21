@@ -368,7 +368,6 @@ func TestResolveProvider(t *testing.T) {
 	}
 }
 
-
 func TestResolveWorkspace(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Agents.Defaults.Workspace = "~/default"

@@ -76,7 +76,7 @@ func TestSave_RejectsPathTraversal(t *testing.T) {
 func TestLazyLoading(t *testing.T) {
 	tmpDir := t.TempDir()
 	key := "test:lazy"
-	
+
 	// 1. Create a session and save it
 	sm1 := NewSessionManager(tmpDir)
 	sm1.GetOrCreate(key)
@@ -88,11 +88,11 @@ func TestLazyLoading(t *testing.T) {
 
 	// 2. Load into sm2 - should be lazy initially
 	sm2 := NewSessionManager(tmpDir)
-	
+
 	sm2.mu.RLock()
 	session, ok := sm2.sessions[key]
 	sm2.mu.RUnlock()
-	
+
 	if !ok {
 		t.Fatalf("Session not found in sm2")
 	}

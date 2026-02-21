@@ -526,4 +526,3 @@ func TestSubagentTool_NoRoleNoHint(t *testing.T) {
 		t.Errorf("Should not include skill hint when no role is specified, got: %s", result.ForLLM)
 	}
 }
-

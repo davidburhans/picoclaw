@@ -30,4 +30,3 @@ type providerSelection struct {
 	connectMode     string
 	enableWebSearch bool
 }
-

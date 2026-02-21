@@ -35,7 +35,7 @@ var (
 		rxp(`"type"\s*:\s*"overloaded_error"`),
 		substr("overloaded"),
 	}
- 
+
 	tokenLimitPatterns = []errorPattern{
 		substr("context_length_exceeded"),
 		substr("too many tokens"),

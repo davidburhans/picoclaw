@@ -317,6 +317,7 @@ func TestFilesystemTool_AllowedExternalPaths(t *testing.T) {
 		t.Errorf("expected error for forbidden secret.txt, got success")
 	}
 }
+
 // TestFilesystemTool_ReadFile_Truncation verifies truncation with max_bytes
 func TestFilesystemTool_ReadFile_Truncation(t *testing.T) {
 	tmpDir := t.TempDir()

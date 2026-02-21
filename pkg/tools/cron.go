@@ -150,7 +150,7 @@ func (t *CronTool) addJob(args map[string]interface{}) *ToolResult {
 	atSeconds, hasAt := args["at_seconds"].(float64)
 	everySeconds, hasEvery := args["every_seconds"].(float64)
 	cronExpr, hasCron := args["cron_expr"].(string)
-	
+
 	// Check for timezone
 	timezone, _ := args["timezone"].(string)
 

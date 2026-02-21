@@ -14,10 +14,10 @@ import (
 )
 
 type Client struct {
-	provider string
-	model    string
-	apiKey   string
-	apiBase  string
+	provider  string
+	model     string
+	apiKey    string
+	apiBase   string
 	client    *http.Client
 	chunkSize int
 	keepAlive string

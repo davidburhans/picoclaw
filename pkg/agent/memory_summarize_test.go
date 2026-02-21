@@ -89,7 +89,7 @@ func TestSummarizeSession_Archival(t *testing.T) {
 	// Setup session history that exceeds threshold (simple test: manually trigger summarizeSession)
 	sessionKey := "test-summarize-archive"
 	wctx := al.getOrCreateWorkspaceContext("")
-	
+
 	// Create session first so SetHistory works
 	wctx.sessions.GetOrCreate(sessionKey)
 
@@ -201,7 +201,7 @@ func TestSummarizeSession_Chunking(t *testing.T) {
 		if idx != i {
 			t.Errorf("Expected chunk index %d, got %d", i, idx)
 		}
-		
+
 		total, ok := record.Payload["total_chunks"].(int)
 		if !ok {
 			t.Errorf("Record %d missing total_chunks", i)

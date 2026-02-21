@@ -1006,7 +1006,7 @@ docker compose --profile gateway up
 ### Providers
 
 > [!NOTE]
-> Groq provides free voice transcription via Whisper. If configured, Telegram voice messages will be automatically transcribed.
+> Voice transcription is now configurable via the `voice` config section. You can use Groq (free Whisper), or any OpenAI-compatible STT server (like faster-whisper). Telegram, Discord, Slack, and OneBot voice messages will be automatically transcribed.
 
 | Provider                   | Purpose                                 | Get API Key                                            |
 | -------------------------- | --------------------------------------- | ------------------------------------------------------ |
@@ -1215,6 +1215,46 @@ PicoClaw routes providers by protocol family:
 - Codex/OAuth path: OpenAI OAuth/token authentication route.
 
 This keeps the runtime lightweight while making new OpenAI-compatible backends mostly a config operation (`api_base` + `api_key`).
+
+### Voice / Speech-to-Text Configuration
+
+PicoClaw supports voice transcription for Telegram, Discord, Slack, and OneBot channels. Configure voice transcription in two steps:
+
+**1. Add an STT model to `model_list`:**
+
+```json
+{
+  "model_list": [
+    {
+      "model_name": "whisper-local",
+      "model": "large-v3",
+      "provider": "stt",
+      "api_base": "http://192.168.1.100:8000/v1"
+    }
+  ]
+}
+```
+
+**2. Reference it in the `voice` section:**
+
+```json
+{
+  "voice": {
+    "model": "whisper-local",
+    "language": "auto"
+  }
+}
+```
+
+**Environment variables:**
+- `PICOCLAW_VOICE_MODEL` - model_name from model_list
+- `PICOCLAW_VOICE_LANGUAGE` - language code or "auto" (default: "auto")
+
+**Supported STT servers:**
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (recommended for local)
+- [speaches](https://github.com/speaches-ai/speaches) (OpenAI-compatible)
+- Groq Whisper (cloud, free tier available)
+- Any server implementing OpenAI's `/v1/audio/transcriptions` endpoint
 
 <details>
 <summary><b>Zhipu</b></summary>

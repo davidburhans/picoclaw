@@ -328,7 +328,7 @@ func (sm *SessionManager) loadSessions() error {
 		if err != nil {
 			continue
 		}
-		
+
 		// Unmarshal only the key to build the index
 		var meta struct {
 			Key string `json:"key"`
@@ -340,7 +340,7 @@ func (sm *SessionManager) loadSessions() error {
 		// Initialize with nil messages to trigger lazy load on property access
 		sm.sessions[meta.Key] = &Session{
 			Key:      meta.Key,
-			Messages: nil, 
+			Messages: nil,
 		}
 	}
 

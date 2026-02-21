@@ -42,7 +42,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, workspaceID, sessionID str
 		return nil
 	}
 
-	// 1. Prepare text for embedding. 
+	// 1. Prepare text for embedding.
 	// For now, let's just concatenate the last few messages or a summary.
 	// A better approach might be to chunk it, but let's start simple.
 	var sb strings.Builder
@@ -67,7 +67,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, workspaceID, sessionID str
 
 	chunks := []string{}
 	runes := []rune(text)
-	
+
 	if len(runes) <= chunkSize {
 		chunks = append(chunks, text)
 	} else {
@@ -181,7 +181,7 @@ func (m *Manager) Search(ctx context.Context, workspaceID, query string, limit, 
 	if collection == "" {
 		collection = "picoclaw"
 	}
-	
+
 	// Prepare filters for workspace isolation
 	filters := map[string]interface{}{
 		"workspace_id": workspaceID,

@@ -401,7 +401,7 @@ func TestCodexCliProvider_GetDefaultModel(t *testing.T) {
 func createMockCodexCLI(t *testing.T, events []string) string {
 	t.Helper()
 	tmpDir := t.TempDir()
-	
+
 	// Create a Go source file that prints the events
 	goSrc := filepath.Join(tmpDir, "mock_codex.go")
 	var sb strings.Builder
@@ -411,7 +411,7 @@ func createMockCodexCLI(t *testing.T, events []string) string {
 		sb.WriteString(fmt.Sprintf("\tfmt.Println(`%s`)\n", event))
 	}
 	sb.WriteString("}\n")
-	
+
 	if err := os.WriteFile(goSrc, []byte(sb.String()), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func createMockCodexCLI(t *testing.T, events []string) string {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build mock CLI: %v\nOutput: %s", err, string(out))
 	}
-	
+
 	return exePath
 }
 
@@ -489,7 +489,7 @@ func TestCodexCliProvider_MockCLI_WithModel(t *testing.T) {
 	// Mock script that captures args to verify model flag is passed
 	tmpDir := t.TempDir()
 	argsPath := filepath.Join(tmpDir, "args.txt")
-	
+
 	goSrc := filepath.Join(tmpDir, "mock_codex.go")
 	script := fmt.Sprintf(`package main
 import (
@@ -506,7 +506,7 @@ func main() {
 	if err := os.WriteFile(goSrc, []byte(script), 0644); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	exeName := "codex"
 	if os.PathSeparator == '\\' {
 		exeName += ".exe"

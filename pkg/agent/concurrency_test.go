@@ -25,7 +25,7 @@ func (m *concurrencyMockProvider) Chat(ctx context.Context, messages []providers
 	m.mu.Lock()
 	m.calls++
 	m.mu.Unlock()
-	
+
 	select {
 	case <-time.After(m.delay):
 		return &providers.LLMResponse{Content: "Slow response"}, nil
@@ -34,13 +34,13 @@ func (m *concurrencyMockProvider) Chat(ctx context.Context, messages []providers
 	}
 }
 
-func (m *concurrencyMockProvider) GetDefaultModel() string { return "slow-model" }
-func (m *concurrencyMockProvider) GetMaxTokens() int { return 4096 }
-func (m *concurrencyMockProvider) GetTemperature() float64 { return 0.7 }
+func (m *concurrencyMockProvider) GetDefaultModel() string   { return "slow-model" }
+func (m *concurrencyMockProvider) GetMaxTokens() int         { return 4096 }
+func (m *concurrencyMockProvider) GetTemperature() float64   { return 0.7 }
 func (m *concurrencyMockProvider) GetMaxToolIterations() int { return 10 }
-func (m *concurrencyMockProvider) GetTimeout() int { return 120 }
-func (m *concurrencyMockProvider) GetMaxConcurrent() int { return 5 }
-func (m *concurrencyMockProvider) GetID() string { return "concurrency-mock-id" }
+func (m *concurrencyMockProvider) GetTimeout() int           { return 120 }
+func (m *concurrencyMockProvider) GetMaxConcurrent() int     { return 5 }
+func (m *concurrencyMockProvider) GetID() string             { return "concurrency-mock-id" }
 
 func TestAgentLoop_ConcurrentProcessing(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "agent-concurrency-*")
@@ -67,10 +67,10 @@ func TestAgentLoop_ConcurrentProcessing(t *testing.T) {
 	// Send 5 messages concurrently
 	for i := 0; i < 5; i++ {
 		msgBus.PublishInbound(ctx, bus.InboundMessage{
-			Channel: "test",
-			SenderID: fmt.Sprintf("user%d", i),
-			ChatID: "chat1",
-			Content: "hello",
+			Channel:    "test",
+			SenderID:   fmt.Sprintf("user%d", i),
+			ChatID:     "chat1",
+			Content:    "hello",
 			SessionKey: fmt.Sprintf("session%d", i),
 		})
 	}
@@ -109,9 +109,9 @@ func TestAgentLoop_GracefulShutdown(t *testing.T) {
 
 	// Trigger processing
 	msgBus.PublishInbound(ctx, bus.InboundMessage{
-		Channel: "test",
-		SenderID: "user1",
-		Content: "hello",
+		Channel:    "test",
+		SenderID:   "user1",
+		Content:    "hello",
 		SessionKey: "session1",
 	})
 
