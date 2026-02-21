@@ -152,14 +152,36 @@ func createToolRegistry(workspace, workspaceName string, allowedPaths []string, 
 	// Subagent uses it to communicate directly with user
 	messageTool := tools.NewMessageTool()
 	messageTool.SetSendCallback(func(channel, chatID, content string) error {
+		msgType := ""
+		if cfg.Voice.TTS.Enabled && cfg.Voice.TTS.AutoPlay {
+			msgType = bus.MessageTypeAudio
+			logger.InfoCF("agent", "Auto-TTS enabled, sending as audio", map[string]interface{}{
+				"channel": channel,
+				"content": content[:min(50, len(content))],
+			})
+		}
 		msgBus.PublishOutbound(context.Background(), bus.OutboundMessage{
 			Channel: channel,
 			ChatID:  chatID,
 			Content: content,
+			Type:    msgType,
 		})
 		return nil
 	})
 	registry.Register(messageTool)
+
+	// Speak tool - sends message as audio (TTS)
+	speakTool := tools.NewSpeakTool()
+	speakTool.SetCallback(func(channel, chatID, content string) error {
+		msgBus.PublishOutbound(context.Background(), bus.OutboundMessage{
+			Channel: channel,
+			ChatID:  chatID,
+			Content: content,
+			Type:    bus.MessageTypeAudio,
+		})
+		return nil
+	})
+	registry.Register(speakTool)
 
 	// MCP tools - register tools from all enabled MCP servers
 	if cfg.MCP != nil && len(cfg.MCP) > 0 {
@@ -558,10 +580,19 @@ func (al *AgentLoop) handleInboundMessage(ctx context.Context, msg bus.InboundMe
 		}
 
 		if !alreadySent {
+			msgType := ""
+			if al.config.Voice.TTS.Enabled && al.config.Voice.TTS.AutoPlay {
+				msgType = bus.MessageTypeAudio
+				logger.InfoCF("agent", "Auto-TTS enabled on direct response", map[string]interface{}{
+					"channel": msg.Channel,
+					"content": response[:min(50, len(response))],
+				})
+			}
 			al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 				Channel: msg.Channel,
 				ChatID:  msg.ChatID,
 				Content: response,
+				Type:    msgType,
 			})
 		}
 	}
@@ -1472,6 +1503,11 @@ func (al *AgentLoop) updateToolContexts(registry *tools.ToolRegistry, channel, c
 		}
 	}
 	if tool, ok := registry.Get("subagent"); ok {
+		if st, ok := tool.(tools.ContextualTool); ok {
+			st.SetContext(channel, chatID)
+		}
+	}
+	if tool, ok := registry.Get("speak"); ok {
 		if st, ok := tool.(tools.ContextualTool); ok {
 			st.SetContext(channel, chatID)
 		}

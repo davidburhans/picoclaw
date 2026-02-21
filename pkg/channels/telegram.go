@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,13 +27,15 @@ import (
 
 type TelegramChannel struct {
 	*BaseChannel
-	bot          *telego.Bot
-	commands     TelegramCommander
-	config       *config.Config
-	chatIDs      map[string]int64
-	transcriber  voice.Transcriber
-	placeholders sync.Map // chatID -> messageID
-	stopThinking sync.Map // chatID -> thinkingCancel
+	bot                  *telego.Bot
+	commands             TelegramCommander
+	config               *config.Config
+	chatIDs              map[string]int64
+	transcriber          voice.Transcriber
+	synthesizer          voice.Synthesizer
+	includeTextWithVoice bool
+	placeholders         sync.Map // chatID -> messageID
+	stopThinking         sync.Map // chatID -> thinkingCancel
 }
 
 type thinkingCancel struct {
@@ -89,6 +92,14 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 
 func (c *TelegramChannel) SetTranscriber(transcriber voice.Transcriber) {
 	c.transcriber = transcriber
+}
+
+func (c *TelegramChannel) SetSynthesizer(synthesizer voice.Synthesizer) {
+	c.synthesizer = synthesizer
+}
+
+func (c *TelegramChannel) SetIncludeTextWithVoice(include bool) {
+	c.includeTextWithVoice = include
 }
 
 func (c *TelegramChannel) Start(ctx context.Context) error {
@@ -162,6 +173,47 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 			cf.Cancel()
 		}
 		c.stopThinking.Delete(msg.ChatID)
+	}
+
+	// Handle audio message type
+	if msg.Type == bus.MessageTypeAudio || msg.Audio != "" {
+		audioPath := msg.Audio
+		if audioPath == "" {
+			// Generate TTS if synthesizer is available and text is provided
+			if c.synthesizer != nil && c.synthesizer.IsAvailable() && msg.Content != "" {
+				audioPath, err = c.synthesizer.Synthesize(ctx, msg.Content)
+				if err != nil {
+					logger.ErrorCF("telegram", "TTS synthesis failed", map[string]interface{}{"error": err})
+					// Fall back to text message
+				}
+			}
+		}
+
+		if audioPath != "" {
+			defer os.Remove(audioPath)
+			audioFile, err := os.Open(audioPath)
+			if err != nil {
+				logger.ErrorCF("telegram", "Failed to open audio file", map[string]interface{}{"error": err})
+				return err
+			}
+			defer audioFile.Close()
+			voiceMsg := tu.Voice(tu.ID(chatID), tu.FileFromReader(audioFile, filepath.Base(audioPath)))
+			_, err = c.bot.SendVoice(ctx, voiceMsg)
+			if err != nil {
+				logger.ErrorCF("telegram", "Failed to send voice message", map[string]interface{}{"error": err})
+				return err
+			}
+			// Also send text content if enabled and present
+			if c.includeTextWithVoice && msg.Content != "" {
+				htmlContent := markdownToTelegramHTML(msg.Content)
+				textMsg := tu.Message(tu.ID(chatID), htmlContent)
+				textMsg.ParseMode = telego.ModeHTML
+				if _, err := c.bot.SendMessage(ctx, textMsg); err != nil {
+					logger.WarnCF("telegram", "Failed to send text message with voice", map[string]interface{}{"error": err})
+				}
+			}
+			return nil
+		}
 	}
 
 	htmlContent := markdownToTelegramHTML(msg.Content)

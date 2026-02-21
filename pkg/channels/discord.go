@@ -24,13 +24,15 @@ const (
 
 type DiscordChannel struct {
 	*BaseChannel
-	session     *discordgo.Session
-	config      config.DiscordConfig
-	transcriber voice.Transcriber
-	ctx         context.Context
-	wg          sync.WaitGroup
-	typingMu    sync.Mutex
-	typingStop  map[string]chan struct{} // chatID → stop signal
+	session              *discordgo.Session
+	config               config.DiscordConfig
+	transcriber          voice.Transcriber
+	synthesizer          voice.Synthesizer
+	includeTextWithVoice bool
+	ctx                  context.Context
+	wg                   sync.WaitGroup
+	typingMu             sync.Mutex
+	typingStop           map[string]chan struct{} // chatID → stop signal
 
 	reactionMu      sync.Mutex
 	activeReactions map[string]string // messageID → emoji (currently added position emoji)
@@ -58,6 +60,14 @@ func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordC
 
 func (c *DiscordChannel) SetTranscriber(transcriber voice.Transcriber) {
 	c.transcriber = transcriber
+}
+
+func (c *DiscordChannel) SetSynthesizer(synthesizer voice.Synthesizer) {
+	c.synthesizer = synthesizer
+}
+
+func (c *DiscordChannel) SetIncludeTextWithVoice(include bool) {
+	c.includeTextWithVoice = include
 }
 
 func (c *DiscordChannel) getContext() context.Context {
@@ -139,6 +149,62 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 
 	if msg.Type == bus.MessageTypeReaction {
 		return c.handleReaction(msg)
+	}
+
+	// Handle audio message type
+	if msg.Type == bus.MessageTypeAudio || msg.Audio != "" {
+		logger.InfoCF("discord", "Received audio message, processing TTS", map[string]any{
+			"has_audio_path": msg.Audio != "",
+			"has_content":    msg.Content != "",
+			"content_len":    len(msg.Content),
+		})
+		audioPath := msg.Audio
+		if audioPath == "" {
+			// Generate TTS if synthesizer is available and text is provided
+			if c.synthesizer != nil && c.synthesizer.IsAvailable() && msg.Content != "" {
+				var err error
+				audioPath, err = c.synthesizer.Synthesize(ctx, msg.Content)
+				if err != nil {
+					logger.ErrorCF("discord", "TTS synthesis failed", map[string]any{"error": err})
+					// Fall back to text message
+				}
+			} else {
+				logger.WarnCF("discord", "TTS not available", map[string]any{
+					"synthesizer_nil":       c.synthesizer == nil,
+					"synthesizer_available": c.synthesizer != nil && c.synthesizer.IsAvailable(),
+				})
+			}
+		}
+
+		if audioPath != "" {
+			defer os.Remove(audioPath)
+			f, err := os.Open(audioPath)
+			if err != nil {
+				logger.ErrorCF("discord", "Failed to open audio file", map[string]any{"error": err})
+				return err
+			}
+			defer f.Close()
+			file := &discordgo.File{
+				Name:        "voice.wav",
+				ContentType: "audio/wav",
+				Reader:      f,
+			}
+
+			// Include text content along with audio if enabled
+			msgSend := &discordgo.MessageSend{
+				Files: []*discordgo.File{file},
+			}
+			if c.includeTextWithVoice && msg.Content != "" {
+				msgSend.Content = msg.Content
+			}
+
+			_, err = c.session.ChannelMessageSendComplex(channelID, msgSend)
+			if err != nil {
+				logger.ErrorCF("discord", "Failed to send audio message", map[string]any{"error": err})
+				return err
+			}
+			return nil
+		}
 	}
 
 	runes := []rune(msg.Content)
