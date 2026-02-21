@@ -114,7 +114,7 @@ func authLoginOpenAI(useDeviceCode bool) {
 		os.Exit(1)
 	}
 
-	if err := auth.SetCredential("openai", cred); err != nil {
+	if err = auth.SetCredential("openai", cred); err != nil {
 		fmt.Printf("Failed to save credentials: %v\n", err)
 		os.Exit(1)
 	}
@@ -186,7 +186,7 @@ func authLoginGoogleAntigravity() {
 		fmt.Printf("Project: %s\n", projectID)
 	}
 
-	if err := auth.SetCredential("google-antigravity", cred); err != nil {
+	if err = auth.SetCredential("google-antigravity", cred); err != nil {
 		fmt.Printf("Failed to save credentials: %v\n", err)
 		os.Exit(1)
 	}
@@ -261,7 +261,7 @@ func authLoginPasteToken(provider string) {
 		os.Exit(1)
 	}
 
-	if err := auth.SetCredential(provider, cred); err != nil {
+	if err = auth.SetCredential(provider, cred); err != nil {
 		fmt.Printf("Failed to save credentials: %v\n", err)
 		os.Exit(1)
 	}

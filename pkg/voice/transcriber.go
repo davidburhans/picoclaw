@@ -83,18 +83,18 @@ func (t *STTTranscriber) Transcribe(ctx context.Context, audioFilePath string) (
 
 	audioFile, err := os.Open(audioFilePath)
 	if err != nil {
-		logger.ErrorCF("voice", "Failed to open audio file", map[string]interface{}{"path": audioFilePath, "error": err})
+		logger.ErrorCF("voice", "Failed to open audio file", map[string]any{"path": audioFilePath, "error": err})
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
 	}
 	defer audioFile.Close()
 
 	fileInfo, err := audioFile.Stat()
 	if err != nil {
-		logger.ErrorCF("voice", "Failed to get file info", map[string]interface{}{"path": audioFilePath, "error": err})
+		logger.ErrorCF("voice", "Failed to get file info", map[string]any{"path": audioFilePath, "error": err})
 		return nil, fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	logger.DebugCF("voice", "Audio file details", map[string]interface{}{
+	logger.DebugCF("voice", "Audio file details", map[string]any{
 		"size_bytes": fileInfo.Size(),
 		"file_name":  filepath.Base(audioFilePath),
 	})
@@ -149,7 +149,7 @@ func (t *STTTranscriber) Transcribe(ctx context.Context, audioFilePath string) (
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
 	if err != nil {
-		logger.ErrorCF("voice", "Failed to create request", map[string]interface{}{"error": err})
+		logger.ErrorCF("voice", "Failed to create request", map[string]any{"error": err})
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -165,19 +165,19 @@ func (t *STTTranscriber) Transcribe(ctx context.Context, audioFilePath string) (
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		logger.ErrorCF("voice", "Failed to send request", map[string]interface{}{"error": err})
+		logger.ErrorCF("voice", "Failed to send request", map[string]any{"error": err})
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.ErrorCF("voice", "Failed to read response", map[string]interface{}{"error": err})
+		logger.ErrorCF("voice", "Failed to read response", map[string]any{"error": err})
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		logger.ErrorCF("voice", "API error", map[string]interface{}{
+		logger.ErrorCF("voice", "API error", map[string]any{
 			"status_code": resp.StatusCode,
 			"response":    string(body),
 		})
@@ -191,11 +191,11 @@ func (t *STTTranscriber) Transcribe(ctx context.Context, audioFilePath string) (
 
 	var result TranscriptionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		logger.ErrorCF("voice", "Failed to unmarshal response", map[string]interface{}{"error": err})
+		logger.ErrorCF("voice", "Failed to unmarshal response", map[string]any{"error": err})
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	logger.InfoCF("voice", "Transcription completed successfully", map[string]interface{}{
+	logger.InfoCF("voice", "Transcription completed successfully", map[string]any{
 		"text_length":           len(result.Text),
 		"language":              result.Language,
 		"duration_seconds":      result.Duration,

@@ -292,10 +292,10 @@ func TestBuildPrompt_WithTools(t *testing.T) {
 			Function: ToolFunctionDefinition{
 				Name:        "get_weather",
 				Description: "Get current weather",
-				Parameters: map[string]interface{}{
+				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"city": map[string]interface{}{"type": "string"},
+					"properties": map[string]any{
+						"city": map[string]any{"type": "string"},
 					},
 				},
 			},

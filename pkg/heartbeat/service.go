@@ -195,7 +195,7 @@ func (hs *HeartbeatService) executeHeartbeat() {
 	if result.Async {
 		hs.logInfo("Async task started: %s", result.ForLLM)
 		logger.InfoCF("heartbeat", "Async heartbeat task started",
-			map[string]interface{}{
+			map[string]any{
 				"message": result.ForLLM,
 			})
 		return
@@ -277,7 +277,7 @@ This file contains tasks for the heartbeat service to check periodically.
 Add your heartbeat tasks below this line:
 `
 
-	if err := os.WriteFile(heartbeatPath, []byte(defaultContent), 0644); err != nil {
+	if err := os.WriteFile(heartbeatPath, []byte(defaultContent), 0o644); err != nil {
 		hs.logError("Failed to create default HEARTBEAT.md: %v", err)
 	} else {
 		hs.logInfo("Created default HEARTBEAT.md template")
@@ -356,7 +356,7 @@ func (hs *HeartbeatService) logError(format string, args ...any) {
 // log writes a message to the heartbeat log file
 func (hs *HeartbeatService) log(level, format string, args ...any) {
 	logFile := filepath.Join(hs.workspace, "heartbeat.log")
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}

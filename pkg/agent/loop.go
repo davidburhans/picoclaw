@@ -687,7 +687,10 @@ func (al *AgentLoop) ProcessDirect(ctx context.Context, content, sessionKey stri
 	return al.ProcessDirectWithChannel(ctx, content, sessionKey, "cli", "direct")
 }
 
-func (al *AgentLoop) ProcessDirectWithChannel(ctx context.Context, content, sessionKey, channel, chatID string) (string, error) {
+func (al *AgentLoop) ProcessDirectWithChannel(
+	ctx context.Context,
+	content, sessionKey, channel, chatID string,
+) (string, error) {
 	msg := bus.InboundMessage{
 		Channel:    channel,
 		SenderID:   "cron",
@@ -729,7 +732,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		logContent = utils.Truncate(msg.Content, 80)
 	}
 	logger.InfoCF("agent", fmt.Sprintf("Processing message from %s:%s: %s", msg.Channel, msg.SenderID, logContent),
-		map[string]interface{}{
+		map[string]any{
 			"channel":     msg.Channel,
 			"chat_id":     msg.ChatID,
 			"sender_id":   msg.SenderID,
@@ -941,7 +944,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 	}
 
 	logger.InfoCF("agent", "Processing system message",
-		map[string]interface{}{
+		map[string]any{
 			"sender_id": msg.SenderID,
 			"chat_id":   msg.ChatID,
 		})
@@ -968,7 +971,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 	// Skip internal channels - only log, don't send to user
 	if constants.IsInternalChannel(originChannel) {
 		logger.InfoCF("agent", "Subagent completed (internal channel)",
-			map[string]interface{}{
+			map[string]any{
 				"sender_id":   msg.SenderID,
 				"content_len": len(content),
 				"channel":     originChannel,
@@ -1008,7 +1011,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx
 		if !constants.IsInternalChannel(opts.Channel) {
 			channelKey := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
 			if err := al.RecordLastChannel(wctx, channelKey); err != nil {
-				logger.WarnCF("agent", "Failed to record last channel: %v", map[string]interface{}{"error": err.Error()})
+				logger.WarnCF("agent", "Failed to record last channel", map[string]any{"error": err.Error()})
 			}
 		}
 	}
@@ -1106,7 +1109,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions, wctx
 	// 9. Log response
 	responsePreview := utils.Truncate(finalContent, 120)
 	logger.InfoCF("agent", fmt.Sprintf("Response: %s", responsePreview),
-		map[string]interface{}{
+		map[string]any{
 			"session_key":  opts.SessionKey,
 			"iterations":   iteration,
 			"final_length": len(finalContent),
@@ -1180,7 +1183,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		iteration++
 
 		logger.DebugCF("agent", "LLM iteration",
-			map[string]interface{}{
+			map[string]any{
 				"iteration": iteration,
 				"max":       al.maxIterations,
 			})
@@ -1190,7 +1193,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 		// Log LLM request details
 		logger.DebugCF("agent", "LLM request",
-			map[string]interface{}{
+			map[string]any{
 				"iteration":         iteration,
 				"model":             al.model,
 				"messages_count":    len(messages),
@@ -1201,7 +1204,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 		// Log full messages (detailed)
 		logger.DebugCF("agent", "Full LLM request",
-			map[string]interface{}{
+			map[string]any{
 				"iteration":     iteration,
 				"messages_json": formatMessagesForLog(messages),
 				"tools_json":    formatToolsForLog(providerToolDefs),
@@ -1230,7 +1233,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		// Retry loop for context/token errors
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
-			response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
+			response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]any{
 				"max_tokens":  8192,
 				"temperature": 0.7,
 				"wait":        true, // Wait for concurrency slots rather than retrying manually
@@ -1269,7 +1272,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			isTokenLimit := fErr != nil && fErr.Reason == providers.FailoverTokenLimit
 
 			if isTokenLimit && retry < maxRetries {
-				logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]interface{}{
+				logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]any{
 					"error": err.Error(),
 					"retry": retry,
 				})
@@ -1336,7 +1339,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 		if err != nil {
 			logger.ErrorCF("agent", "LLM call failed",
-				map[string]interface{}{
+				map[string]any{
 					"iteration":       iteration,
 					"error":           err.Error(),
 					"message_summary": getMessageSummary(messages),
@@ -1348,7 +1351,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
-				map[string]interface{}{
+				map[string]any{
 					"iteration":     iteration,
 					"content_chars": len(finalContent),
 				})
@@ -1366,7 +1369,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			toolNames = append(toolNames, tc.Name)
 		}
 		logger.InfoCF("agent", "LLM requested tool calls",
-			map[string]interface{}{
+			map[string]any{
 				"tools":     toolNames,
 				"count":     len(normalizedToolCalls),
 				"iteration": iteration,
@@ -1405,7 +1408,16 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		wctx.sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
 		// Execute tool calls
-		if len(response.ToolCalls) > 0 {
+		for _, tc := range normalizedToolCalls {
+			// Log tool call with arguments preview
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			argsPreview := utils.Truncate(string(argsJSON), 200)
+			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+				map[string]any{
+					"tool":      tc.Name,
+					"iteration": iteration,
+				})
+
 			// Add tool reaction for Discord
 			if opts.Channel == "discord" && opts.Metadata["message_id"] != "" {
 				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
@@ -1418,7 +1430,23 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 						"message_id": opts.Metadata["message_id"],
 					},
 				})
-				// Remove reaction at the end of tool execution block (or iteration)
+			}
+
+			// Create async callback for tools that implement AsyncTool
+			asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
+				if !result.Silent && result.ForUser != "" {
+					logger.InfoCF("agent", "Async tool completed, agent will handle notification",
+						map[string]any{
+							"tool":        tc.Name,
+							"content_len": len(result.ForUser),
+						})
+				}
+			}
+
+			toolResult := wctx.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
+
+			// Remove reaction at the end of tool execution block (or iteration)
+			if opts.Channel == "discord" && opts.Metadata["message_id"] != "" {
 				defer al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
@@ -1431,54 +1459,30 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				})
 			}
 
-			for _, tc := range response.ToolCalls {
-				// Log tool call with arguments preview
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				argsPreview := utils.Truncate(string(argsJSON), 200)
-				logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
-					map[string]interface{}{
-						"tool":      tc.Name,
-						"iteration": iteration,
-					})
-
-				// Create async callback for tools that implement AsyncTool
-				asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
-					if !result.Silent && result.ForUser != "" {
-						logger.InfoCF("agent", "Async tool completed, agent will handle notification",
-							map[string]interface{}{
-								"tool":        tc.Name,
-								"content_len": len(result.ForUser),
-							})
-					}
-				}
-
-				toolResult := wctx.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
-
-				// Send ForUser content to user immediately if not Silent
-				if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
-					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-						Channel: opts.Channel,
-						ChatID:  opts.ChatID,
-						Content: toolResult.ForUser,
-					})
-				}
-
-				// Determine content for LLM based on tool result
-				contentForLLM := toolResult.ForLLM
-				if contentForLLM == "" && toolResult.Err != nil {
-					contentForLLM = toolResult.Err.Error()
-				}
-
-				toolResultMsg := providers.Message{
-					Role:       "tool",
-					Content:    contentForLLM,
-					ToolCallID: tc.ID,
-				}
-				messages = append(messages, toolResultMsg)
-
-				// Save tool result message to session
-				wctx.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+			// Send ForUser content to user immediately if not Silent
+			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
+				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					Channel: opts.Channel,
+					ChatID:  opts.ChatID,
+					Content: toolResult.ForUser,
+				})
 			}
+
+			// Determine content for LLM based on tool result
+			contentForLLM := toolResult.ForLLM
+			if contentForLLM == "" && toolResult.Err != nil {
+				contentForLLM = toolResult.Err.Error()
+			}
+
+			toolResultMsg := providers.Message{
+				Role:       "tool",
+				Content:    contentForLLM,
+				ToolCallID: tc.ID,
+			}
+			messages = append(messages, toolResultMsg)
+
+			// Save tool result message to session
+			wctx.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 		}
 	}
 
@@ -1592,7 +1596,10 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 
 	// Append compression note to the original system prompt instead of adding a new system message
 	// This avoids having two consecutive system messages which some APIs (like Zhipu) reject
-	compressionNote := fmt.Sprintf("\n\n[System Note: Emergency compression dropped %d oldest messages due to context limit]", droppedCount)
+	compressionNote := fmt.Sprintf(
+		"\n\n[System Note: Emergency compression dropped %d oldest messages due to context limit]",
+		droppedCount,
+	)
 	enhancedSystemPrompt := history[0]
 	enhancedSystemPrompt.Content = enhancedSystemPrompt.Content + compressionNote
 	newHistory = append(newHistory, enhancedSystemPrompt)
@@ -1604,7 +1611,7 @@ func (al *AgentLoop) forceCompression(sessionKey string, wctx *workspaceContext)
 	wctx.sessions.SetHistory(sessionKey, newHistory)
 	wctx.sessions.Save(sessionKey)
 
-	logger.WarnCF("agent", "Forced compression executed", map[string]interface{}{
+	logger.WarnCF("agent", "Forced compression executed", map[string]any{
 		"session_key":  sessionKey,
 		"dropped_msgs": droppedCount,
 		"new_count":    len(newHistory),
@@ -1763,12 +1770,21 @@ func (al *AgentLoop) summarizeSession(wctx *workspaceContext, sessionKey string)
 		s1, _ := al.summarizeBatch(ctx, nil, part1, "")
 		s2, _ := al.summarizeBatch(ctx, nil, part2, "")
 
-		// Merge them
-		mergePrompt := fmt.Sprintf("Merge these two conversation summaries into one cohesive summary:\n\n1: %s\n\n2: %s", s1, s2)
-		resp, err := al.provider.Chat(ctx, []providers.Message{{Role: "user", Content: mergePrompt}}, nil, al.model, map[string]interface{}{
-			"max_tokens":  1024,
-			"temperature": 0.3,
-		})
+		mergePrompt := fmt.Sprintf(
+			"Merge these two conversation summaries into one cohesive summary:\n\n1: %s\n\n2: %s",
+			s1,
+			s2,
+		)
+		resp, err := al.provider.Chat(
+			ctx,
+			[]providers.Message{{Role: "user", Content: mergePrompt}},
+			nil,
+			al.model,
+			map[string]any{
+				"max_tokens":  1024,
+				"temperature": 0.3,
+			},
+		)
 		if err == nil {
 			finalSummary = resp.Content
 		} else {
@@ -1790,7 +1806,12 @@ func (al *AgentLoop) summarizeSession(wctx *workspaceContext, sessionKey string)
 }
 
 // summarizeBatch summarizes a batch of messages.
-func (al *AgentLoop) summarizeBatch(ctx context.Context, agent *AgentInstance, batch []providers.Message, existingSummary string) (string, error) {
+func (al *AgentLoop) summarizeBatch(
+	ctx context.Context,
+	agent *AgentInstance,
+	batch []providers.Message,
+	existingSummary string,
+) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("Provide a concise summary of this conversation segment, preserving core context and key points.\n")
 	if existingSummary != "" {
@@ -1804,10 +1825,24 @@ func (al *AgentLoop) summarizeBatch(ctx context.Context, agent *AgentInstance, b
 	}
 	prompt := sb.String()
 
-	response, err := al.provider.Chat(ctx, []providers.Message{{Role: "user", Content: prompt}}, nil, al.model, map[string]interface{}{
-		"max_tokens":  1024,
-		"temperature": 0.3,
-	})
+	// Use agent.Provider if available, otherwise fall back to al.provider (fork's approach)
+	provider := al.provider
+	model := al.model
+	if agent != nil {
+		provider = agent.Provider
+		model = agent.Model
+	}
+
+	response, err := provider.Chat(
+		ctx,
+		[]providers.Message{{Role: "user", Content: prompt}},
+		nil,
+		model,
+		map[string]any{
+			"max_tokens":  1024,
+			"temperature": 0.3,
+		},
+	)
 	if err != nil {
 		return "", err
 	}

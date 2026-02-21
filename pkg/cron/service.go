@@ -347,7 +347,7 @@ func (cs *CronService) loadStore() error {
 
 func (cs *CronService) saveStoreUnsafe() error {
 	dir := filepath.Dir(cs.storePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
@@ -358,7 +358,7 @@ func (cs *CronService) saveStoreUnsafe() error {
 		return err
 	}
 
-	if err := os.WriteFile(tempFile, data, 0600); err != nil {
+	if err := os.WriteFile(tempFile, data, 0o600); err != nil {
 		return err
 	}
 
@@ -370,7 +370,13 @@ func (cs *CronService) saveStoreUnsafe() error {
 	return nil
 }
 
-func (cs *CronService) AddJob(name string, schedule CronSchedule, message string, deliver bool, channel, to string) (*CronJob, error) {
+func (cs *CronService) AddJob(
+	name string,
+	schedule CronSchedule,
+	message string,
+	deliver bool,
+	channel, to string,
+) (*CronJob, error) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
@@ -495,7 +501,7 @@ func (cs *CronService) ListJobs(includeDisabled bool) []CronJob {
 	return enabled
 }
 
-func (cs *CronService) Status() map[string]interface{} {
+func (cs *CronService) Status() map[string]any {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
@@ -506,7 +512,7 @@ func (cs *CronService) Status() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":      cs.running,
 		"jobs":         len(cs.store.Jobs),
 		"nextWakeAtMS": cs.getNextWakeMS(),

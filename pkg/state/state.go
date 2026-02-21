@@ -227,7 +227,7 @@ func (sm *Manager) saveAtomic() error {
 	}
 
 	// Write to temp file
-	if err := os.WriteFile(tempFile, data, 0644); err != nil {
+	if err := os.WriteFile(tempFile, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 

@@ -118,8 +118,20 @@ func TestExtractFrontmatter(t *testing.T) {
 			assert.NotEmpty(t, frontmatter, "Frontmatter should be extracted for %s line endings", tc.lineEndingType)
 
 			yamlMeta := sl.parseSimpleYAML(frontmatter)
-			assert.Equal(t, tc.expectedName, yamlMeta["name"], "Name should be correctly parsed from frontmatter with %s line endings", tc.lineEndingType)
-			assert.Equal(t, tc.expectedDesc, yamlMeta["description"], "Description should be correctly parsed from frontmatter with %s line endings", tc.lineEndingType)
+			assert.Equal(
+				t,
+				tc.expectedName,
+				yamlMeta["name"],
+				"Name should be correctly parsed from frontmatter with %s line endings",
+				tc.lineEndingType,
+			)
+			assert.Equal(
+				t,
+				tc.expectedDesc,
+				yamlMeta["description"],
+				"Description should be correctly parsed from frontmatter with %s line endings",
+				tc.lineEndingType,
+			)
 		})
 	}
 }
@@ -174,7 +186,13 @@ func TestStripFrontmatter(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := sl.stripFrontmatter(tc.content)
-			assert.Equal(t, tc.expectedContent, result, "Frontmatter should be stripped correctly for %s", tc.lineEndingType)
+			assert.Equal(
+				t,
+				tc.expectedContent,
+				result,
+				"Frontmatter should be stripped correctly for %s",
+				tc.lineEndingType,
+			)
 		})
 	}
 }
