@@ -1,6 +1,3 @@
-// PicoClaw - Ultra-lightweight personal AI agent
-// License: MIT
-
 package main
 
 import (
@@ -9,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -106,13 +104,26 @@ func gatewayCmd() {
 
 	var transcriber voice.Transcriber
 
-	// Initialize STT transcriber from voice.stt config
+	// Initialize STT transcriber - try config first, then fallback to Groq from model_list
 	if cfg.Voice.STT.Enabled {
 		transcriber = voice.NewTranscriber(&cfg.Voice.STT)
 		logger.InfoCF("voice", "Voice transcription configured", map[string]interface{}{
 			"model":    cfg.Voice.STT.Model,
 			"api_base": cfg.Voice.STT.APIBase,
 		})
+	} else {
+		// Fallback: try to get Groq API key from model_list (for users who migrated from legacy config)
+		var groqAPIKey string
+		for _, mc := range cfg.ModelList {
+			if strings.HasPrefix(mc.Model, "groq/") && mc.APIKey != "" {
+				groqAPIKey = mc.APIKey
+				break
+			}
+		}
+		if groqAPIKey != "" {
+			transcriber = voice.NewGroqTranscriber(groqAPIKey)
+			logger.InfoC("voice", "Groq voice transcription enabled (fallback from model_list)")
+		}
 	}
 
 	if transcriber != nil && transcriber.IsAvailable() {
