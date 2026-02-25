@@ -7,6 +7,7 @@ package providers
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 )
@@ -16,6 +17,17 @@ import (
 // The old providers config is automatically converted to model_list during config loading.
 // Returns the provider, the model ID to use, and any error.
 func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
+	if cfg.Agents.Defaults.Provider == "schedule" {
+		if cfg.Agents.Defaults.Schedule == nil {
+			return nil, "", fmt.Errorf("schedule provider requested but no schedule config found")
+		}
+		loc, err := time.LoadLocation(cfg.Agents.Defaults.Schedule.Timezone)
+		if err != nil {
+			loc = time.Local
+		}
+		return NewScheduleProvider(cfg, cfg.Agents.Defaults.Schedule, loc), "", nil
+	}
+
 	model := cfg.Agents.Defaults.GetModelName()
 
 	// Ensure model_list is populated (should be done by LoadConfig, but handle edge cases)

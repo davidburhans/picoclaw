@@ -186,17 +186,36 @@ type SessionConfig struct {
 type AgentDefaults struct {
 	Workspace           string   `json:"workspace"                       env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
 	RestrictToWorkspace bool     `json:"restrict_to_workspace"           env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	Provider            string   `json:"provider"                        env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
-	ModelName           string   `json:"model_name,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_MODEL_NAME"`
-	Model               string   `json:"model,omitempty"                 env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"` // Deprecated: use model_name instead
-	ModelFallbacks      []string `json:"model_fallbacks,omitempty"`
-	ImageModel          string   `json:"image_model,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks []string `json:"image_model_fallbacks,omitempty"`
-	MaxTokens           int      `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature         *float64 `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations   int      `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	SafetyLevel         string   `json:"safety_level,omitempty"          env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
-	BirthYear           int      `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
+	Provider            string          `json:"provider"                        env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
+	Schedule            *ScheduleConfig `json:"schedule,omitempty"`
+	ModelName           string          `json:"model_name,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_MODEL_NAME"`
+	Model               string          `json:"model,omitempty"                 env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"` // Deprecated: use model_name instead
+	ModelFallbacks      []string        `json:"model_fallbacks,omitempty"`
+	ImageModel          string          `json:"image_model,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks []string        `json:"image_model_fallbacks,omitempty"`
+	MaxTokens           int             `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature         *float64        `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations   int             `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	SafetyLevel         string          `json:"safety_level,omitempty"          env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
+	BirthYear           int             `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
+}
+
+type ScheduleConfig struct {
+	Timezone string         `json:"timezone"`
+	Default  ScheduleRule   `json:"default"`
+	Rules    []ScheduleRule `json:"rules"`
+}
+
+type ScheduleRule struct {
+	Days     []string       `json:"days,omitempty"`
+	Hours    *ScheduleHours `json:"hours,omitempty"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model,omitempty"`
+}
+
+type ScheduleHours struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 // GetModelName returns the effective model name for the agent defaults.
