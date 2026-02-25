@@ -642,10 +642,10 @@ Explicitly deferred. If re-added: check origin/main commits `5088676`, `85d98ad`
 - [x] Add mcpServers to config/config.example.json
 
 ### Phase 2: Safety Filter
-- [ ] Copy pkg/safety/ from origin/main
-- [ ] Add SafetyLevel + BirthYear to agent config
-- [ ] Integrate CheckContent/CheckResponse in agent loop
-- [ ] Inject GetSystemPrompt into system message
+- [x] Copy pkg/safety/ from origin/main
+- [x] Add SafetyLevel + BirthYear to agent config
+- [x] Integrate CheckContent/CheckResponse in agent loop
+- [x] Inject GetSystemPrompt into system message
 
 ### Phase 3: Orchestrator MCP Server _(separate project)_
 - [ ] Choose language/framework for MCP server

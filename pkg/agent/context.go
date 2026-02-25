@@ -10,6 +10,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/safety"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -19,6 +20,7 @@ type ContextBuilder struct {
 	skillsLoader *skills.SkillsLoader
 	memory       *MemoryStore
 	tools        *tools.ToolRegistry // Direct reference to tool registry
+	safetyFilter *safety.Filter
 }
 
 func getGlobalConfigDir() string {
@@ -41,6 +43,11 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
 		memory:       NewMemoryStore(workspace),
 	}
+}
+
+// SetSafetyFilter injects the safety filter for building context
+func (cb *ContextBuilder) SetSafetyFilter(filter *safety.Filter) {
+	cb.safetyFilter = filter
 }
 
 // SetToolsRegistry sets the tools registry for dynamic tool summary generation.
@@ -134,6 +141,13 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 	memoryContext := cb.memory.GetMemoryContext()
 	if memoryContext != "" {
 		parts = append(parts, "# Memory\n\n"+memoryContext)
+	}
+
+	if cb.safetyFilter != nil {
+		safetyPrompt := cb.safetyFilter.GetSystemPrompt()
+		if safetyPrompt != "" {
+			parts = append(parts, safetyPrompt)
+		}
 	}
 
 	// Join with "---" separator

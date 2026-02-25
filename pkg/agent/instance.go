@@ -8,6 +8,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
+	"github.com/sipeed/picoclaw/pkg/safety"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -31,6 +32,7 @@ type AgentInstance struct {
 	Subagents      *config.SubagentsConfig
 	SkillsFilter   []string
 	Candidates     []providers.FallbackCandidate
+	Filter         *safety.Filter
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -95,6 +97,16 @@ func NewAgentInstance(
 	}
 	candidates := providers.ResolveCandidates(modelCfg, defaults.Provider)
 
+	filter := safety.NewFilter(defaults.SafetyLevel, defaults.BirthYear)
+	if agentCfg != nil {
+		if agentCfg.SafetyLevel != "" {
+			filter = safety.NewFilter(agentCfg.SafetyLevel, agentCfg.BirthYear)
+		} else if agentCfg.BirthYear != 0 {
+			filter = safety.NewFilter(defaults.SafetyLevel, agentCfg.BirthYear)
+		}
+	}
+	contextBuilder.SetSafetyFilter(filter)
+
 	return &AgentInstance{
 		ID:             agentID,
 		Name:           agentName,
@@ -112,6 +124,7 @@ func NewAgentInstance(
 		Subagents:      subagents,
 		SkillsFilter:   skillsFilter,
 		Candidates:     candidates,
+		Filter:         filter,
 	}
 }
 

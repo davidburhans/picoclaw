@@ -149,8 +149,10 @@ type AgentConfig struct {
 	Name      string            `json:"name,omitempty"`
 	Workspace string            `json:"workspace,omitempty"`
 	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills    []string          `json:"skills,omitempty"`
-	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	Skills      []string          `json:"skills,omitempty"`
+	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
+	SafetyLevel string            `json:"safety_level,omitempty"`
+	BirthYear   int               `json:"birth_year,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -193,6 +195,8 @@ type AgentDefaults struct {
 	MaxTokens           int      `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature         *float64 `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations   int      `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	SafetyLevel         string   `json:"safety_level,omitempty"          env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
+	BirthYear           int      `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
 }
 
 // GetModelName returns the effective model name for the agent defaults.

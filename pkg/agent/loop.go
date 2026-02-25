@@ -362,6 +362,14 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		agent = al.registry.GetDefaultAgent()
 	}
 
+	// Safety check on input
+	if agent.Filter != nil {
+		if blocked, reason := agent.Filter.CheckContent(msg.Content); blocked {
+			logger.WarnCF("safety", "Inbound message blocked", map[string]any{"reason": reason, "agent_id": agent.ID})
+			return "I cannot process this message due to safety filters: " + reason, nil
+		}
+	}
+
 	// Use routed session key, but honor pre-set agent-scoped keys (for ProcessDirect/cron)
 	sessionKey := route.SessionKey
 	if msg.SessionKey != "" && strings.HasPrefix(msg.SessionKey, "agent:") {
@@ -481,6 +489,17 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
+	}
+
+	// Safety check on output
+	if agent.Filter != nil && finalContent != "" {
+		check := agent.Filter.CheckResponse(finalContent)
+		if !check.Safe {
+			logger.WarnCF("safety", "Outbound message blocked", map[string]any{"reason": check.Reason, "agent_id": agent.ID})
+			finalContent = check.BlockedMessage
+		} else if check.NeedsApproval {
+			logger.InfoCF("safety", "Outbound message needs approval", map[string]any{"reason": check.Reason, "agent_id": agent.ID})
+		}
 	}
 
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
