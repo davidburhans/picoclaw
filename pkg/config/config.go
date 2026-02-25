@@ -47,16 +47,31 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 type Config struct {
-	Agents    AgentsConfig    `json:"agents"`
-	Bindings  []AgentBinding  `json:"bindings,omitempty"`
-	Session   SessionConfig   `json:"session,omitempty"`
-	Channels  ChannelsConfig  `json:"channels"`
-	Providers ProvidersConfig `json:"providers,omitempty"`
-	ModelList []ModelConfig   `json:"model_list"` // New model-centric provider configuration
-	Gateway   GatewayConfig   `json:"gateway"`
-	Tools     ToolsConfig     `json:"tools"`
-	Heartbeat HeartbeatConfig `json:"heartbeat"`
-	Devices   DevicesConfig   `json:"devices"`
+	Agents    AgentsConfig               `json:"agents"`
+	Bindings  []AgentBinding             `json:"bindings,omitempty"`
+	Session   SessionConfig              `json:"session,omitempty"`
+	Channels  ChannelsConfig             `json:"channels"`
+	Providers ProvidersConfig            `json:"providers,omitempty"`
+	ModelList []ModelConfig              `json:"model_list"` // New model-centric provider configuration
+	Gateway   GatewayConfig              `json:"gateway"`
+	Tools     ToolsConfig                `json:"tools"`
+	Heartbeat HeartbeatConfig            `json:"heartbeat"`
+	Devices   DevicesConfig              `json:"devices"`
+	MCP       map[string]MCPServerConfig `json:"mcp,omitempty"`
+}
+
+type MCPServerConfig struct {
+	Name               string            `json:"name,omitempty"`
+	Command            string            `json:"command,omitempty"`
+	Args               []string          `json:"args,omitempty"`
+	Env                map[string]string `json:"env,omitempty"`
+	URL                string            `json:"url,omitempty"`
+	Headers            map[string]string `json:"headers,omitempty"`
+	ToolTimeout        int               `json:"toolTimeout,omitempty"`
+	WorkspaceAllowList []string          `json:"workspaceAllowList,omitempty"`
+	WorkspaceDenyList  []string          `json:"workspaceDenyList,omitempty"`
+	ToolAllowList      []string          `json:"toolAllowList,omitempty"`
+	ToolDenyList       []string          `json:"toolDenyList,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config

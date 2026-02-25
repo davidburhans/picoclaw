@@ -21,6 +21,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/skills"
@@ -57,6 +58,9 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 
 	// Register shared tools to all agents
 	registerSharedTools(cfg, msgBus, registry, provider)
+
+	// Register MCP tools from configured servers
+	registerMCPTools(cfg, registry)
 
 	// Set up shared fallback chain
 	cooldown := providers.NewCooldownTracker()
@@ -152,6 +156,53 @@ func registerSharedTools(
 
 		// Update context builder with the complete tools registry
 		agent.ContextBuilder.SetToolsRegistry(agent.Tools)
+	}
+}
+
+// registerMCPTools connects to configured MCP servers and registers their tools
+func registerMCPTools(cfg *config.Config, registry *AgentRegistry) {
+	if len(cfg.MCP) == 0 {
+		return
+	}
+
+	mcpManager := mcp.NewManager()
+	ctx := context.Background()
+
+	for name, serverCfg := range cfg.MCP {
+		mcpCfg := mcp.MCPServerConfig{
+			Name:               name,
+			Command:            serverCfg.Command,
+			Args:               serverCfg.Args,
+			Env:                serverCfg.Env,
+			URL:                serverCfg.URL,
+			Headers:            serverCfg.Headers,
+			ToolTimeout:        serverCfg.ToolTimeout,
+			WorkspaceAllowList: serverCfg.WorkspaceAllowList,
+			WorkspaceDenyList:  serverCfg.WorkspaceDenyList,
+			ToolAllowList:      serverCfg.ToolAllowList,
+			ToolDenyList:       serverCfg.ToolDenyList,
+		}
+		if err := mcpManager.AddServer(mcpCfg); err != nil {
+			logger.ErrorCF("mcp", fmt.Sprintf("Failed to add MCP server %s", name), map[string]any{"error": err.Error()})
+			continue
+		}
+
+		if err := mcpManager.ConnectServer(ctx, name); err != nil {
+			logger.ErrorCF("mcp", fmt.Sprintf("Failed to connect MCP server %s", name), map[string]any{"error": err.Error()})
+			continue
+		}
+		logger.InfoCF("mcp", fmt.Sprintf("Connected to MCP server %s", name), nil)
+	}
+
+	// Register tools to all agents based on workspace filtering
+	for _, agentID := range registry.ListAgentIDs() {
+		if agent, ok := registry.GetAgent(agentID); ok {
+			for _, toolDef := range mcpManager.GetToolsForWorkspace(agent.Workspace) {
+				agent.Tools.Register(tools.NewMCPTool(mcpManager, toolDef))
+			}
+			// Update context builder with the complete tools registry again
+			agent.ContextBuilder.SetToolsRegistry(agent.Tools)
+		}
 	}
 }
 

@@ -239,6 +239,18 @@
       }
     }
   },
+  "mcp": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/files"]
+    },
+    "remote-api": {
+      "url": "https://example.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer xxxxx"
+      }
+    }
+  },
   "heartbeat": {
     "enabled": true,
     "interval": 30
