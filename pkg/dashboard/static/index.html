@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PicoClaw Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+    <nav class="sidebar">
+        <div class="logo">
+            <span class="logo-icon">🦀</span>
+            <span class="logo-text">PicoClaw</span>
+        </div>
+        <ul class="nav-links">
+            <li class="active" data-tab="status">
+                <span class="icon">📊</span> Status
+            </li>
+            <li data-tab="activity">
+                <span class="icon">📜</span> Activity
+            </li>
+            <li data-tab="config">
+                <span class="icon">⚙️</span> Configuration
+            </li>
+            <li class="nav-divider"></li>
+            <li>
+                <a href="/metrics" target="_blank" class="external-link">
+                    <span class="icon">📈</span> Prometheus
+                </a>
+            </li>
+            <li id="grafana-nav" style="display:none">
+                <a href="#" target="_blank" class="external-link" id="grafana-link">
+                    <span class="icon">🖼️</span> Grafana
+                </a>
+            </li>
+        </ul>
+        <div class="sidebar-footer">
+            <button id="restart-btn" class="btn btn-danger">
+                <span class="icon">🔄</span> Restart Gateway
+            </button>
+        </div>
+    </nav>
+
+    <main class="content">
+        <header class="top-bar">
+            <h1 id="page-title">System Status</h1>
+            <div class="status-indicators">
+                <div class="indicator">
+                    <span class="label">Uptime:</span>
+                    <span id="uptime-val" class="value">0s</span>
+                </div>
+                <div class="indicator">
+                    <span class="dot green"></span>
+                    <span class="value">Online</span>
+                </div>
+            </div>
+        </header>
+
+        <section id="tab-status" class="tab-content active">
+            <div class="dashboard-grid">
+                <div class="card stat-card">
+                    <h3>LLM Activity</h3>
+                    <div class="stat-value" id="llm-requests">0</div>
+                    <div class="stat-label">Requests (session)</div>
+                </div>
+                <div class="card stat-card">
+                    <h3>Token Usage</h3>
+                    <div class="stat-value" id="total-tokens">0</div>
+                    <div class="stat-label">Tokens (session)</div>
+                </div>
+                <div class="card stat-card">
+                    <h3>Tools</h3>
+                    <div class="stat-value" id="tool-calls">0</div>
+                    <div class="stat-label">Executions</div>
+                </div>
+            </div>
+            
+            <div class="card main-card">
+                <h3>System Health</h3>
+                <div id="health-checks" class="health-grid">
+                    <div class="loading">Loading checks...</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-activity" class="tab-content">
+            <div class="card activity-card">
+                <div class="card-header">
+                    <h3>Live Activity Feed</h3>
+                    <span class="badge">Live</span>
+                </div>
+                <div id="activity-feed" class="activity-list">
+                    <!-- Events injected here -->
+                </div>
+            </div>
+        </section>
+
+        <section id="tab-config" class="tab-content">
+            <div class="card config-card">
+                <div class="card-header">
+                    <h3>System Configuration</h3>
+                    <div class="actions">
+                        <button id="save-config" class="btn btn-primary">Save Changes</button>
+                        <button id="view-diff" class="btn btn-secondary">Preview Diff</button>
+                    </div>
+                </div>
+                <div id="config-form-container" class="config-form">
+                    <div class="loading">Generating schema-driven form...</div>
+                </div>
+            </div>
+
+            <div class="card backups-card">
+                <h3>Backups & Rollback</h3>
+                <div id="backups-list" class="backups-list">
+                    <!-- Backups injected here -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="modal-backdrop" class="modal-backdrop hidden"></div>
+    <div id="diff-modal" class="modal hidden">
+        <div class="modal-header">
+            <h3>Configuration Changes</h3>
+            <button class="close-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <pre id="diff-content"></pre>
+        </div>
+        <div class="modal-footer">
+            <button id="confirm-save" class="btn btn-primary">Confirm & Save</button>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>

@@ -18,9 +18,12 @@ RUN make build
 # ============================================================
 # Stage 2: Minimal runtime image
 # ============================================================
-FROM alpine:3.23
+FROM python:3.14-alpine
 
-RUN apk add --no-cache ca-certificates tzdata curl
+RUN apk add --no-cache ca-certificates tzdata git make ffmpeg curl wget nodejs npm jq github-cli go gcc musl-dev openssl-dev pkgconfig rust cargo ripgrep
+
+# Install MCP CLI, httpx and uv (for uvx support)
+RUN pip install --no-cache-dir "mcp[cli]" httpx uv
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -35,6 +38,8 @@ RUN addgroup -g 1000 picoclaw && \
 
 # Switch to non-root user
 USER picoclaw
+
+ENV USE_BUILTIN_RIPGREP=0
 
 # Run onboard to create initial directories and config
 RUN /usr/local/bin/picoclaw onboard

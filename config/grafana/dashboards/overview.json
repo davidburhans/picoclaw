@@ -1,0 +1,53 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "title": "LLM Call Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "rate(picoclaw_llm_duration_seconds_sum[5m]) / rate(picoclaw_llm_duration_seconds_count[5m])", "legendFormat": "{{model}} ({{agent_type}})" }
+      ]
+    },
+    {
+      "title": "Token Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "rate(picoclaw_llm_tokens_total[5m])", "legendFormat": "{{type}} - {{model}}" }
+      ]
+    },
+    {
+      "title": "Tool Executions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rate(picoclaw_tool_calls_total[5m])", "legendFormat": "{{tool}}" }
+      ]
+    },
+    {
+      "title": "Concurrency Status",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        { "expr": "picoclaw_concurrency_active", "legendFormat": "Active: {{provider}}" },
+        { "expr": "picoclaw_concurrency_waiting", "legendFormat": "Waiting: {{provider}}" }
+      ]
+    },
+    {
+      "title": "Agent Turn Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        { "expr": "rate(picoclaw_agent_turn_duration_seconds_sum[5m]) / rate(picoclaw_agent_turn_duration_seconds_count[5m])", "legendFormat": "Main Agent Loop" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "title": "PicoClaw Overview",
+  "uid": "picoclaw-overview"
+}
