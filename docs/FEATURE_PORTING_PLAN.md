@@ -648,12 +648,13 @@ Explicitly deferred. If re-added: check origin/main commits `5088676`, `85d98ad`
 - [x] Inject GetSystemPrompt into system message
 
 ### Phase 3: Orchestrator MCP Server _(separate project)_
-- [ ] Choose language/framework for MCP server
-- [ ] Implement mailbox tools (send_message, list_messages, read_message, list_instances)
-- [ ] Implement family chore tools (assign_chore, list_chores, complete_chore, verify_chore)
-- [ ] Implement shared list tools (create_list, add_to_list, get_list, remove_from_list)
-- [ ] Add orchestrator container to docker-compose.yml
-- [ ] Configure PicoClaw instances with orchestrator MCP connection
+- [x] Choose language/framework for MCP server
+- [x] Implement mailbox (send/list/read)
+- [x] Implement chores (assign/list/complete/verify)
+- [x] Implement shared lists (create/add/update/delete)
+- [x] Add to docker-compose as sidecar
+- [x] Add orchestrator container to docker-compose.yml
+- [x] Configure PicoClaw instances with orchestrator MCP connection
 
 ### Phase 4: Schedule Provider
 - [ ] Copy schedule_provider.go + tests from origin/main

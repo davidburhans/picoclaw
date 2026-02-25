@@ -42,5 +42,23 @@ services:
       - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
     command: ["gateway"]
 
+  # ─────────────────────────────────────────────
+  # PicoClaw Orchestrator (MCP Server)
+  #   docker compose up picoclaw-orchestrator
+  # ─────────────────────────────────────────────
+  picoclaw-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: picoclaw-orchestrator
+    restart: unless-stopped
+    profiles:
+      - orchestrator
+      - gateway # usually run alongside gateway
+    volumes:
+      # Persistent workspace for orchestrator
+      - picoclaw-workspace:/app/data
+    command: ["/app/orchestrator"]
+
 volumes:
   picoclaw-workspace:

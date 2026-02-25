@@ -1,0 +1,37 @@
+# ============================================================
+# Stage 1: Build the orchestrator binary
+# ============================================================
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git make
+
+WORKDIR /src
+
+# Cache dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build
+COPY . .
+RUN go build -o /src/build/orchestrator ./cmd/orchestrator
+
+# ============================================================
+# Stage 2: Minimal runtime image
+# ============================================================
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates tzdata curl
+
+# Copy binary
+COPY --from=builder /src/build/orchestrator /app/orchestrator
+
+# Create non-root user and group
+RUN addgroup -g 1000 orchestrator && \
+    adduser -D -u 1000 -G orchestrator orchestrator
+
+# Switch to non-root user
+USER orchestrator
+
+WORKDIR /app
+
+ENTRYPOINT ["/app/orchestrator"]
