@@ -169,7 +169,7 @@ func (c *QQChannel) handleC2CMessage() event.C2CMessageEventHandler {
 			"peer_id":    senderID,
 		}
 
-		c.HandleMessage(senderID, senderID, content, []string{}, metadata)
+		c.HandleMessage(senderID, senderID, fmt.Sprintf("%s:%s", c.name, senderID), content, []string{}, metadata)
 
 		return nil
 	}
@@ -213,7 +213,7 @@ func (c *QQChannel) handleGroupATMessage() event.GroupATMessageEventHandler {
 			"peer_id":    data.GroupID,
 		}
 
-		c.HandleMessage(senderID, data.GroupID, content, []string{}, metadata)
+		c.HandleMessage(senderID, data.GroupID, fmt.Sprintf("%s:%s", c.name, data.GroupID), content, []string{}, metadata)
 
 		return nil
 	}
