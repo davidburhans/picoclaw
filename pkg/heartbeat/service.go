@@ -17,6 +17,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/metrics"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -177,16 +178,20 @@ func (hs *HeartbeatService) executeHeartbeat() {
 	// Debug log for channel resolution
 	hs.logInfo("Resolved channel: %s, chatID: %s (from lastChannel: %s)", channel, chatID, lastChannel)
 
+	start := time.Now()
 	result := handler(prompt, channel, chatID)
+	duration := time.Since(start)
 
 	if result == nil {
 		hs.logInfo("Heartbeat handler returned nil result")
+		metrics.DefaultRecorder().RecordHeartbeat("error", hs.workspace, duration)
 		return
 	}
 
 	// Handle different result types
 	if result.IsError {
 		hs.logError("Heartbeat error: %s", result.ForLLM)
+		metrics.DefaultRecorder().RecordHeartbeat("error", hs.workspace, duration)
 		return
 	}
 
@@ -196,12 +201,14 @@ func (hs *HeartbeatService) executeHeartbeat() {
 			map[string]any{
 				"message": result.ForLLM,
 			})
+		metrics.DefaultRecorder().RecordHeartbeat("async", hs.workspace, duration)
 		return
 	}
 
 	// Check if silent
 	if result.Silent {
 		hs.logInfo("Heartbeat OK - silent")
+		metrics.DefaultRecorder().RecordHeartbeat("silent", hs.workspace, duration)
 		return
 	}
 
@@ -211,6 +218,7 @@ func (hs *HeartbeatService) executeHeartbeat() {
 	} else if result.ForLLM != "" {
 		hs.sendResponse(result.ForLLM)
 	}
+	metrics.DefaultRecorder().RecordHeartbeat("success", hs.workspace, duration)
 
 	hs.logInfo("Heartbeat completed: %s", result.ForLLM)
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/adhocore/gronx"
+	"github.com/sipeed/picoclaw/pkg/metrics"
 )
 
 type CronSchedule struct {
@@ -192,10 +193,18 @@ func (cs *CronService) executeJobByID(jobID string) {
 		return
 	}
 
+	execStart := time.Now()
 	var err error
 	if cs.onJob != nil {
 		_, err = cs.onJob(callbackJob)
 	}
+	duration := time.Since(execStart)
+
+	status := "success"
+	if err != nil {
+		status = "error"
+	}
+	metrics.DefaultRecorder().RecordCronExecution(callbackJob.Name, status, callbackJob.Payload.Kind, duration)
 
 	// Now acquire lock to update state
 	cs.mu.Lock()

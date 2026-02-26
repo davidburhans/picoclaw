@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/metrics"
 )
 
 // FallbackChain orchestrates model fallback across multiple candidates.
@@ -116,6 +118,7 @@ func (fc *FallbackChain) Execute(
 					remaining.Round(time.Second),
 				),
 			})
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, string(FailoverRateLimit), 0, true)
 			continue
 		}
 
@@ -126,6 +129,7 @@ func (fc *FallbackChain) Execute(
 
 		if err == nil {
 			// Success.
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, "success", elapsed, false)
 			fc.cooldown.MarkSuccess(candidate.Provider)
 			result.Response = resp
 			result.Provider = candidate.Provider
@@ -141,6 +145,7 @@ func (fc *FallbackChain) Execute(
 				Error:    err,
 				Duration: elapsed,
 			})
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, "canceled", elapsed, false)
 			return nil, context.Canceled
 		}
 
@@ -155,6 +160,7 @@ func (fc *FallbackChain) Execute(
 				Error:    err,
 				Duration: elapsed,
 			})
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, "unclassified", elapsed, false)
 			return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
 				candidate.Provider, candidate.Model, err)
 		}
@@ -168,6 +174,7 @@ func (fc *FallbackChain) Execute(
 				Reason:   failErr.Reason,
 				Duration: elapsed,
 			})
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, string(failErr.Reason), elapsed, false)
 			return nil, failErr
 		}
 
@@ -180,14 +187,17 @@ func (fc *FallbackChain) Execute(
 			Reason:   failErr.Reason,
 			Duration: elapsed,
 		})
+		metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, string(failErr.Reason), elapsed, false)
 
 		// If this was the last candidate, return aggregate error.
 		if i == len(candidates)-1 {
+			metrics.DefaultRecorder().RecordFallbackExhaustion()
 			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
 		}
 	}
 
 	// All candidates were skipped (all in cooldown).
+	metrics.DefaultRecorder().RecordFallbackExhaustion()
 	return nil, &FallbackExhaustedError{Attempts: result.Attempts}
 }
 
@@ -217,6 +227,7 @@ func (fc *FallbackChain) ExecuteImage(
 		elapsed := time.Since(start)
 
 		if err == nil {
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, "success", elapsed, false)
 			result.Response = resp
 			result.Provider = candidate.Provider
 			result.Model = candidate.Model
@@ -230,6 +241,7 @@ func (fc *FallbackChain) ExecuteImage(
 				Error:    err,
 				Duration: elapsed,
 			})
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, "canceled", elapsed, false)
 			return nil, context.Canceled
 		}
 
@@ -243,6 +255,7 @@ func (fc *FallbackChain) ExecuteImage(
 				Reason:   FailoverFormat,
 				Duration: elapsed,
 			})
+			metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, string(FailoverFormat), elapsed, false)
 			return nil, &FailoverError{
 				Reason:   FailoverFormat,
 				Provider: candidate.Provider,
@@ -258,8 +271,10 @@ func (fc *FallbackChain) ExecuteImage(
 			Error:    err,
 			Duration: elapsed,
 		})
+		metrics.DefaultRecorder().RecordFallback(candidate.Provider, candidate.Model, "error", elapsed, false)
 
 		if i == len(candidates)-1 {
+			metrics.DefaultRecorder().RecordFallbackExhaustion()
 			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
 		}
 	}
