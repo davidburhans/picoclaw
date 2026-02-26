@@ -194,8 +194,14 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 				break
 			}
 		}
+
+		// Also check if it's a direct reply to the bot's message
+		if m.ReferencedMessage != nil && m.ReferencedMessage.Author != nil && m.ReferencedMessage.Author.ID == c.botUserID {
+			isMentioned = true
+		}
+
 		if !isMentioned {
-			logger.DebugCF("discord", "Message ignored - bot not mentioned", map[string]any{
+			logger.DebugCF("discord", "Message ignored - bot not mentioned or replied to", map[string]any{
 				"user_id": m.Author.ID,
 			})
 			return

@@ -216,6 +216,36 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		return nil
 	}
 
+	// Mention gating for groups
+	if c.config.Channels.Telegram.MentionOnly && message.Chat.Type != "private" {
+		isMentioned := false
+		botUsername := c.bot.Username()
+
+		// Check if it's a direct reply to the bot
+		if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
+			if message.ReplyToMessage.From.Username == botUsername {
+				isMentioned = true
+			}
+		}
+
+		// Check text/caption for mention
+		if !isMentioned && botUsername != "" {
+			mentionText := "@" + botUsername
+			if strings.Contains(strings.ToLower(message.Text), strings.ToLower(mentionText)) ||
+				strings.Contains(strings.ToLower(message.Caption), strings.ToLower(mentionText)) {
+				isMentioned = true
+			}
+		}
+
+		if !isMentioned {
+			logger.DebugCF("telegram", "Message ignored - bot not mentioned or replied to", map[string]any{
+				"user_id": senderID,
+				"chat_id": message.Chat.ID,
+			})
+			return nil
+		}
+	}
+
 	chatID := message.Chat.ID
 	c.chatIDs[senderID] = chatID
 

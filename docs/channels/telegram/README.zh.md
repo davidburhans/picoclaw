@@ -11,7 +11,8 @@ Telegram Channel 通过 Telegram 机器人 API 使用长轮询实现基于机器
       "enabled": true,
       "token": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
       "allow_from": ["123456789"],
-      "proxy": ""
+      "proxy": "",
+      "mention_only": false
     }
   }
 }
@@ -23,6 +24,7 @@ Telegram Channel 通过 Telegram 机器人 API 使用长轮询实现基于机器
 | token      | string | 是   | Telegram 机器人 API Token                                 |
 | allow_from | array  | 否   | 用户ID白名单，空表示允许所有用户                          |
 | proxy      | string | 否   | 连接 Telegram API 的代理 URL (例如 http://127.0.0.1:7890) |
+| mention_only| bool  | 否   | 是否在群组中仅响应提及机器人的消息                        |
 
 ## 设置流程
 
