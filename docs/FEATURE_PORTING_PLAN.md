@@ -657,9 +657,9 @@ Explicitly deferred. If re-added: check origin/main commits `5088676`, `85d98ad`
 - [x] Configure PicoClaw instances with orchestrator MCP connection
 
 ### Phase 4: Schedule Provider
-- [ ] Copy schedule_provider.go + tests from origin/main
-- [ ] Register schedule provider type in factory
-- [ ] Add ScheduleConfig to config
+- [x] Copy schedule_provider.go + tests from origin/main
+- [x] Register schedule provider type in factory
+- [x] Add ScheduleConfig to config
 
 ### Phase 5: Metrics & Dashboard
 - [ ] Copy pkg/metrics/ and pkg/dashboard/ from origin/main

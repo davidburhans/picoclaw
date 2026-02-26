@@ -57,7 +57,33 @@ type Config struct {
 	Tools     ToolsConfig                `json:"tools"`
 	Heartbeat HeartbeatConfig            `json:"heartbeat"`
 	Devices   DevicesConfig              `json:"devices"`
+	Memory    MemoryConfig               `json:"memory"`
 	MCP       map[string]MCPServerConfig `json:"mcp,omitempty"`
+}
+
+type MemoryConfig struct {
+	Enabled   bool            `json:"enabled" env:"PICOCLAW_MEMORY_ENABLED"`
+	Provider  string          `json:"provider" env:"PICOCLAW_MEMORY_PROVIDER"`
+	Qdrant    QdrantConfig    `json:"qdrant"`
+	Embedding EmbeddingConfig `json:"embedding"`
+}
+
+type EmbeddingConfig struct {
+	Provider  string `json:"provider" env:"PICOCLAW_MEMORY_EMBEDDING_PROVIDER"`
+	Model     string `json:"model" env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`
+	APIKey    string `json:"api_key" env:"PICOCLAW_MEMORY_EMBEDDING_API_KEY"`
+	BaseURL   string `json:"base_url" env:"PICOCLAW_MEMORY_EMBEDDING_BASE_URL"`
+	Timeout   int    `json:"timeout" env:"PICOCLAW_MEMORY_EMBEDDING_TIMEOUT"`
+	ChunkSize int    `json:"chunk_size" env:"PICOCLAW_MEMORY_EMBEDDING_CHUNK_SIZE"`
+	KeepAlive string `json:"keep_alive" env:"PICOCLAW_MEMORY_EMBEDDING_KEEP_ALIVE"`
+	NumCtx    int    `json:"num_ctx" env:"PICOCLAW_MEMORY_EMBEDDING_NUM_CTX"`
+}
+
+type QdrantConfig struct {
+	URL            string `json:"url" env:"PICOCLAW_MEMORY_QDRANT_URL"`
+	CollectionName string `json:"collection_name" env:"PICOCLAW_MEMORY_QDRANT_COLLECTION_NAME"`
+	APIKey         string `json:"api_key" env:"PICOCLAW_MEMORY_QDRANT_API_KEY"`
+	ModelName      string `json:"model_name" env:"PICOCLAW_MEMORY_QDRANT_MODEL_NAME"`
 }
 
 type MCPServerConfig struct {

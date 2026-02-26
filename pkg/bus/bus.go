@@ -9,6 +9,7 @@ type MessageBus struct {
 	inbound  chan InboundMessage
 	outbound chan OutboundMessage
 	handlers map[string]MessageHandler
+	monitors []chan any
 	closed   bool
 	mu       sync.RWMutex
 }
@@ -18,7 +19,16 @@ func NewMessageBus() *MessageBus {
 		inbound:  make(chan InboundMessage, 100),
 		outbound: make(chan OutboundMessage, 100),
 		handlers: make(map[string]MessageHandler),
+		monitors: make([]chan any, 0),
 	}
+}
+
+func (mb *MessageBus) Monitor() <-chan any {
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	ch := make(chan any, 100)
+	mb.monitors = append(mb.monitors, ch)
+	return ch
 }
 
 func (mb *MessageBus) PublishInbound(msg InboundMessage) {
@@ -26,6 +36,12 @@ func (mb *MessageBus) PublishInbound(msg InboundMessage) {
 	defer mb.mu.RUnlock()
 	if mb.closed {
 		return
+	}
+	for _, ch := range mb.monitors {
+		select {
+		case ch <- msg:
+		default:
+		}
 	}
 	mb.inbound <- msg
 }
@@ -44,6 +60,12 @@ func (mb *MessageBus) PublishOutbound(msg OutboundMessage) {
 	defer mb.mu.RUnlock()
 	if mb.closed {
 		return
+	}
+	for _, ch := range mb.monitors {
+		select {
+		case ch <- msg:
+		default:
+		}
 	}
 	mb.outbound <- msg
 }
@@ -79,4 +101,7 @@ func (mb *MessageBus) Close() {
 	mb.closed = true
 	close(mb.inbound)
 	close(mb.outbound)
+	for _, ch := range mb.monitors {
+		close(ch)
+	}
 }

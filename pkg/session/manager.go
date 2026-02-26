@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -20,15 +23,18 @@ type Session struct {
 }
 
 type SessionManager struct {
-	sessions map[string]*Session
-	mu       sync.RWMutex
-	storage  string
+	sessions      map[string]*Session
+	mu            sync.RWMutex
+	storage       string
+	memoryManager *memory.Manager
+	workspaceID   string
 }
 
 func NewSessionManager(storage string) *SessionManager {
 	sm := &SessionManager{
-		sessions: make(map[string]*Session),
-		storage:  storage,
+		sessions:    make(map[string]*Session),
+		storage:     storage,
+		workspaceID: "default",
 	}
 
 	if storage != "" {
@@ -57,6 +63,44 @@ func (sm *SessionManager) GetOrCreate(key string) *Session {
 	sm.sessions[key] = session
 
 	return session
+}
+
+func (sm *SessionManager) SetMemoryManager(mm *memory.Manager, workspaceID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.memoryManager = mm
+	if workspaceID != "" {
+		sm.workspaceID = workspaceID
+	}
+}
+
+func (sm *SessionManager) Rotate(ctx context.Context, key string) error {
+	sm.mu.Lock()
+	session, ok := sm.sessions[key]
+	if !ok || len(session.Messages) == 0 {
+		sm.mu.Unlock()
+		return nil
+	}
+
+	messagesToArchive := make([]providers.Message, len(session.Messages))
+	copy(messagesToArchive, session.Messages)
+
+	// Clean up the session in memory
+	session.Messages = []providers.Message{}
+	session.Summary = ""
+	session.Updated = time.Now()
+	sm.mu.Unlock()
+
+	// Archive the session outside the lock
+	if sm.memoryManager != nil && sm.memoryManager.IsEnabled() {
+		if err := sm.memoryManager.ArchiveSession(ctx, sm.workspaceID, key, messagesToArchive); err != nil {
+			logger.WarnCF("session", "Failed to archive session to vector DB", map[string]interface{}{"error": err, "session": key})
+		} else {
+			logger.InfoCF("session", "Session archived to vector DB", map[string]interface{}{"session": key, "messages": len(messagesToArchive)})
+		}
+	}
+
+	return sm.Save(key)
 }
 
 func (sm *SessionManager) AddMessage(sessionKey, role, content string) {

@@ -22,6 +22,10 @@ import (
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/mcp"
+	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/memory/embedding"
+	"github.com/sipeed/picoclaw/pkg/memory/qdrant"
+	"github.com/sipeed/picoclaw/pkg/metrics"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/skills"
@@ -39,6 +43,7 @@ type AgentLoop struct {
 	summarizing    sync.Map
 	fallback       *providers.FallbackChain
 	channelManager *channels.Manager
+	memoryManager  *memory.Manager
 }
 
 // processOptions configures how a message is processed
@@ -54,6 +59,7 @@ type processOptions struct {
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
+	provider = providers.WrapWithMetrics(provider)
 	registry := NewAgentRegistry(cfg, provider)
 
 	// Register shared tools to all agents
@@ -73,13 +79,51 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
+	var memoryManager *memory.Manager
+	if cfg.Memory.Enabled {
+		if strings.ToLower(cfg.Memory.Provider) == "qdrant" {
+			db, err := qdrant.NewClient(cfg.Memory.Qdrant.URL, cfg.Memory.Qdrant.APIKey)
+			if err != nil {
+				logger.ErrorCF("agent", "Failed to initialize Qdrant client", map[string]interface{}{"error": err})
+			} else {
+				embedConfig := cfg.Memory.Embedding
+				if cfg.Memory.Qdrant.ModelName != "" {
+					if mCfg, err := cfg.GetModelConfig(cfg.Memory.Qdrant.ModelName); err == nil {
+						parts := strings.SplitN(mCfg.Model, "/", 2)
+						provider := "openai"
+						if len(parts) > 1 {
+							provider = parts[0]
+						}
+						embedConfig.Provider = provider
+						embedConfig.Model = mCfg.Model
+						if mCfg.APIBase != "" {
+							embedConfig.BaseURL = mCfg.APIBase
+						}
+						embedConfig.APIKey = mCfg.APIKey
+					}
+				}
+				embedder := embedding.NewClient(embedConfig)
+				memoryManager = memory.NewManager(cfg.Memory, db, embedder)
+				logger.InfoCF("agent", "Long-term memory enabled", map[string]interface{}{"provider": "qdrant"})
+
+				// Provide memoryManager to all agents
+				for _, agentID := range registry.ListAgentIDs() {
+					if agent, ok := registry.GetAgent(agentID); ok {
+						agent.Sessions.SetMemoryManager(memoryManager, agent.Workspace)
+					}
+				}
+			}
+		}
+	}
+
 	return &AgentLoop{
 		bus:         msgBus,
 		cfg:         cfg,
 		registry:    registry,
-		state:       stateManager,
-		summarizing: sync.Map{},
-		fallback:    fallbackChain,
+		state:         stateManager,
+		summarizing:   sync.Map{},
+		fallback:      fallbackChain,
+		memoryManager: memoryManager,
 	}
 }
 
@@ -452,6 +496,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 
 // runAgentLoop is the core message processing logic.
 func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opts processOptions) (string, error) {
+	startTime := time.Now()
 	// 0. Record last channel for heartbeat notifications (skip internal channels)
 	if opts.Channel != "" && opts.ChatID != "" {
 		// Don't record internal channels (cli, system, subagent)
@@ -486,7 +531,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalContent, iteration, numTools, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
 	}
@@ -538,6 +583,20 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 			"final_length": len(finalContent),
 		})
 
+	agentType := "main"
+	if opts.SessionKey == "heartbeat" {
+		agentType = "heartbeat"
+	}
+	metrics.DefaultRecorder().RecordAgentTurn(
+		agent.Model,
+		opts.Channel,
+		agent.Workspace,
+		agentType,
+		time.Since(startTime),
+		iteration,
+		numTools,
+	)
+
 	return finalContent, nil
 }
 
@@ -547,8 +606,9 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
-) (string, int, error) {
+) (string, int, int, error) {
 	iteration := 0
+	numTools := 0
 	var finalContent string
 
 	for iteration < agent.MaxIterations {
@@ -662,7 +722,7 @@ func (al *AgentLoop) runLLMIteration(
 					"iteration": iteration,
 					"error":     err.Error(),
 				})
-			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", iteration, numTools, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		// Check if no tool calls - we're done
@@ -681,6 +741,7 @@ func (al *AgentLoop) runLLMIteration(
 		for _, tc := range response.ToolCalls {
 			normalizedToolCalls = append(normalizedToolCalls, providers.NormalizeToolCall(tc))
 		}
+		numTools += len(normalizedToolCalls)
 
 		// Log tool calls
 		toolNames := make([]string, 0, len(normalizedToolCalls))
@@ -796,7 +857,7 @@ func (al *AgentLoop) runLLMIteration(
 		}
 	}
 
-	return finalContent, iteration, nil
+	return finalContent, iteration, numTools, nil
 }
 
 // updateToolContexts updates the context for tools that need channel/chatID info.
@@ -1119,6 +1180,17 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 	args := parts[1:]
 
 	switch cmd {
+	case "/new":
+		agent := al.registry.GetDefaultAgent()
+		if agent != nil {
+			err := agent.Sessions.Rotate(ctx, msg.SessionKey)
+			if err != nil {
+				return fmt.Sprintf("Failed to rotate session: %v", err), true
+			}
+			return "Started a new session.", true
+		}
+		return "Failed to find default agent to rotate session.", true
+
 	case "/show":
 		if len(args) < 1 {
 			return "Usage: /show [model|channel|agents]", true

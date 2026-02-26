@@ -24,7 +24,11 @@ func (w *MetricsWrapper) Chat(ctx context.Context, messages []Message, tools []T
 
 	// Record metrics
 	agentType := metrics.AgentTypeFromContext(ctx)
-	providerID := w.GetID()
+
+	providerID := "unknown"
+	if p, ok := w.LLMProvider.(interface{ GetID() string }); ok {
+		providerID = p.GetID()
+	}
 
 	status := "success"
 	if err != nil {
@@ -40,7 +44,13 @@ func (w *MetricsWrapper) Chat(ctx context.Context, messages []Message, tools []T
 			TotalTokens:      resp.Usage.TotalTokens,
 		}
 	}
-	metrics.DefaultRecorder().RecordLLMCall(model, providerID, w.GetAPIBase(), string(agentType), status, duration, usage, 0)
+
+	apiBase := "unknown"
+	if p, ok := w.LLMProvider.(interface{ GetAPIBase() string }); ok {
+		apiBase = p.GetAPIBase()
+	}
+
+	metrics.DefaultRecorder().RecordLLMCall(model, providerID, apiBase, string(agentType), status, duration, usage, 0)
 
 	return resp, err
 }

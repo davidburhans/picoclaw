@@ -10,8 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/metrics"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
@@ -134,7 +136,22 @@ func RunToolLoop(
 			// Execute tool (no async callback for subagents - they run independently)
 			var toolResult *ToolResult
 			if config.Tools != nil {
+				start := time.Now()
 				toolResult = config.Tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, channel, chatID, nil)
+				duration := time.Since(start)
+
+				status := "success"
+				if toolResult.Err != nil {
+					status = "error"
+				}
+
+				metrics.DefaultRecorder().RecordToolCall(
+					tc.Name,
+					metrics.AgentTypeFromContext(ctx),
+					status,
+					duration,
+					len(toolResult.ForLLM),
+				)
 			} else {
 				toolResult = ErrorResult("No tools available")
 			}
