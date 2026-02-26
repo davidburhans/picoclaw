@@ -310,13 +310,15 @@ Talk to your picoclaw through Telegram, Discord, DingTalk, LINE, or WeCom
     "telegram": {
       "enabled": true,
       "token": "YOUR_BOT_TOKEN",
-      "allow_from": ["YOUR_USER_ID"]
+      "allow_from": ["YOUR_USER_ID"],
+      "mention_only": false
     }
   }
 }
 ```
 
 > Get your user ID from `@userinfobot` on Telegram.
+> Set `"mention_only": true` to make the bot respond only when @-mentioned in groups.
 
 **3. Run**
 
