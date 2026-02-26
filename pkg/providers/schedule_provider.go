@@ -104,8 +104,13 @@ func (p *ScheduleProvider) resolveProvider(t time.Time) (LLMProvider, string, er
 		providerType = rule.Provider
 		model = rule.Model
 	} else {
-		providerType = p.schedule.Default.Provider
-		model = p.schedule.Default.Model
+		// handle case where p.schedule is nil
+		if p.schedule != nil {
+			providerType = p.schedule.Default.Provider
+			model = p.schedule.Default.Model
+		} else {
+			providerType = "error-no-schedule"
+		}
 	}
 
 	if strings.HasPrefix(providerType, "schedule") {
@@ -164,7 +169,10 @@ func (p *ScheduleProvider) Chat(ctx context.Context, messages []Message, tools [
 func (p *ScheduleProvider) GetID() string {
 	provider, _, err := p.resolveProvider(p.nowFunc())
 	if err != nil || provider == nil {
-		return "schedule:" + p.schedule.Default.Provider
+		if p.schedule != nil {
+			return "schedule:" + p.schedule.Default.Provider
+		}
+		return "schedule"
 	}
 	if sp, ok := provider.(interface{ GetID() string }); ok {
 		return sp.GetID()

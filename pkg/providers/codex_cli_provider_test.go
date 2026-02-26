@@ -401,17 +401,28 @@ func TestCodexCliProvider_GetDefaultModel(t *testing.T) {
 func createMockCodexCLI(t *testing.T, events []string) string {
 	t.Helper()
 	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "codex")
-
+	
+	// Create a .bat file for Windows or .sh for Unix
+	scriptPath := filepath.Join(tmpDir, "codex.bat")
+	
 	var sb strings.Builder
-	sb.WriteString("#!/bin/bash\n")
+	sb.WriteString("@echo off\n")
 	for _, event := range events {
-		sb.WriteString(fmt.Sprintf("echo '%s'\n", event))
+		// Escape special chars for Windows echo (like <, >, |, &, ^)
+		escaped := strings.ReplaceAll(event, "^", "^^")
+		escaped = strings.ReplaceAll(escaped, "&", "^&")
+		escaped = strings.ReplaceAll(escaped, "|", "^|")
+		escaped = strings.ReplaceAll(escaped, "<", "^<")
+		escaped = strings.ReplaceAll(escaped, ">", "^>")
+		// The original mock had single quotes for unix bash. For cmd, we don't quote it, we just emit the literal JSON.
+		sb.WriteString(fmt.Sprintf("echo %s\n", escaped))
 	}
 
 	if err := os.WriteFile(scriptPath, []byte(sb.String()), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// We only return the base "codex" name so the test can execute it relative to dir or modify it if needed,
+	// actually for exec.Command we should just return the full scriptPath
 	return scriptPath
 }
 
@@ -473,12 +484,13 @@ func TestCodexCliProvider_MockCLI_Error(t *testing.T) {
 func TestCodexCliProvider_MockCLI_WithModel(t *testing.T) {
 	// Mock script that captures args to verify model flag is passed
 	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "codex")
-	script := `#!/bin/bash
-# Write args to a file for verification
-echo "$@" > "` + filepath.Join(tmpDir, "args.txt") + `"
-echo '{"type":"item.completed","item":{"id":"1","type":"agent_message","text":"ok"}}'
-echo '{"type":"turn.completed"}'`
+	scriptPath := filepath.Join(tmpDir, "codex.bat")
+	argsPath := filepath.Join(tmpDir, "args.txt")
+	script := "@echo off\n" +
+		"echo %* > \"" + argsPath + "\"\n" +
+		// Cmd echo literal json without quotes wrapping
+		"echo {\"type\":\"item.completed\",\"item\":{\"id\":\"1\",\"type\":\"agent_message\",\"text\":\"ok\"}}\n" +
+		"echo {\"type\":\"turn.completed\"}\n"
 
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -519,8 +531,9 @@ echo '{"type":"turn.completed"}'`
 func TestCodexCliProvider_MockCLI_ContextCancel(t *testing.T) {
 	// Script that sleeps forever
 	tmpDir := t.TempDir()
-	scriptPath := filepath.Join(tmpDir, "codex")
-	script := "#!/bin/bash\nsleep 60"
+	scriptPath := filepath.Join(tmpDir, "codex.bat")
+	// Ping localhost for 60 seconds as a sleep alternative in Windows cmd
+	script := "@echo off\nping 127.0.0.1 -n 61 > nul\n"
 
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

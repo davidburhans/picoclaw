@@ -150,6 +150,9 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		}
 		return provider, modelID, nil
 
+	case "schedule":
+		return NewScheduleProvider(nil, nil, nil), modelID, nil
+
 	default:
 		return nil, "", fmt.Errorf("unknown protocol %q in model %q", protocol, cfg.Model)
 	}

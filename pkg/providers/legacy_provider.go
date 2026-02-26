@@ -21,11 +21,19 @@ func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 		if cfg.Agents.Defaults.Schedule == nil {
 			return nil, "", fmt.Errorf("schedule provider requested but no schedule config found")
 		}
-		loc, err := time.LoadLocation(cfg.Agents.Defaults.Schedule.Timezone)
-		if err != nil {
-			loc = time.Local
+		var loc *time.Location
+		if cfg.Agents.Defaults.Schedule.Timezone != "" {
+			var err error
+			loc, err = time.LoadLocation(cfg.Agents.Defaults.Schedule.Timezone)
+			if err != nil {
+				loc = time.Local
+			}
 		}
-		return NewScheduleProvider(cfg, cfg.Agents.Defaults.Schedule, loc), "", nil
+		provider := NewScheduleProvider(nil, nil, nil)
+		provider.cfg = cfg
+		provider.schedule = cfg.Agents.Defaults.Schedule
+		provider.location = loc
+		return provider, "", nil
 	}
 
 	model := cfg.Agents.Defaults.GetModelName()

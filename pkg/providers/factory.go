@@ -22,6 +22,7 @@ const (
 	providerTypeClaudeCLI
 	providerTypeCodexCLI
 	providerTypeGitHubCopilot
+	providerTypeSchedule
 )
 
 type providerSelection struct {
@@ -144,6 +145,9 @@ func resolveProviderSelection(cfg *config.Config) (providerSelection, error) {
 					sel.apiBase = "https://integrate.api.nvidia.com/v1"
 				}
 			}
+		case "schedule":
+			sel.providerType = providerTypeSchedule
+			return sel, nil
 		case "claude-cli", "claude-code", "claudecode":
 			workspace := cfg.WorkspacePath()
 			if workspace == "" {
