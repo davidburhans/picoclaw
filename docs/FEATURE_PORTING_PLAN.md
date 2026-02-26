@@ -598,7 +598,7 @@ Verify all channel implementations correctly pass session keys to `HandleMessage
 alerts, payment notifications). Adds a `/webhook/:id` endpoint to the gateway that routes
 incoming HTTP POSTs to a configured agent as messages.
 
-**Status**: ❌ NOT BUILT — new feature inspired by OpenClaw and IronClaw.
+**Status**: ✅ BUILT — supports JSON and GitHub payload verification.
 
 ```json
 {
@@ -662,31 +662,31 @@ Explicitly deferred. If re-added: check origin/main commits `5088676`, `85d98ad`
 - [x] Add ScheduleConfig to config
 
 ### Phase 5: Metrics & Dashboard
-- [ ] Copy pkg/metrics/ and pkg/dashboard/ from origin/main
-- [ ] Copy metrics_wrapper.go from origin/main
-- [ ] Port config/prometheus.yml, config/grafana/, docker-compose.yml, Dockerfile
-- [ ] Wire MetricsWrapper + recorder calls into agent loop and tool loop
+- [x] Copy pkg/metrics/ and pkg/dashboard/ from origin/main
+- [x] Copy metrics_wrapper.go from origin/main
+- [x] Port config/prometheus.yml, config/grafana/, docker-compose.yml, Dockerfile
+- [x] Wire MetricsWrapper + recorder calls into agent loop and tool loop
 
 ### Phase 6: Qdrant Long-Term Memory
-- [ ] Copy pkg/memory/ from origin/main
-- [ ] Port memory_search and memory_browse tools
-- [ ] Add MemoryConfig to config
-- [ ] Add session archiving to session manager
-- [ ] Verify UUID point IDs and URL parsing fixes
+- [x] Copy pkg/memory/ from origin/main
+- [x] Port memory_search and memory_browse tools
+- [x] Add MemoryConfig to config
+- [x] Add session archiving to session manager
+- [x] Verify UUID point IDs and URL parsing fixes
 
 ### Phase 7: Session Keys
-- [ ] Audit all channel impls for correct session key passing
+- [x] Audit all channel impls for correct session key passing
 
 ### Phase 8: Webhooks
-- [ ] Design and implement /webhook/:id gateway endpoint
+- [x] Design and implement /webhook/:id gateway endpoint
 
 ### Phase 9: Group Routing
-- [ ] Design mention gating and per-group isolation
+- [x] Design mention gating and per-group isolation
 
 ### Final
-- [ ] `go test ./...`
-- [ ] `golangci-lint run`
-- [ ] `make build-all`
+- [x] `go test ./...`
+- [x] `golangci-lint run`
+- [x] `make build-all`
 
 ---
 
