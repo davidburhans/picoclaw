@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -52,9 +53,8 @@ func TestAuthCredentialNeedsRefresh(t *testing.T) {
 
 func TestStoreRoundtrip(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	homeDirOverride = tmpDir
+	defer func() { homeDirOverride = "" }()
 
 	cred := &AuthCredential{
 		AccessToken:  "test-access-token",
@@ -89,9 +89,8 @@ func TestStoreRoundtrip(t *testing.T) {
 
 func TestStoreFilePermissions(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	homeDirOverride = tmpDir
+	defer func() { homeDirOverride = "" }()
 
 	cred := &AuthCredential{
 		AccessToken: "secret-token",
@@ -105,19 +104,18 @@ func TestStoreFilePermissions(t *testing.T) {
 	path := filepath.Join(tmpDir, ".picoclaw", "auth.json")
 	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("Stat() error: %v", err)
+		t.Fatalf("Stat() error: %v, path: %s", err, path)
 	}
 	perm := info.Mode().Perm()
-	if perm != 0o600 {
+	if runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("file permissions = %o, want 0600", perm)
 	}
 }
 
 func TestStoreMultiProvider(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	homeDirOverride = tmpDir
+	defer func() { homeDirOverride = "" }()
 
 	openaiCred := &AuthCredential{AccessToken: "openai-token", Provider: "openai", AuthMethod: "oauth"}
 	anthropicCred := &AuthCredential{AccessToken: "anthropic-token", Provider: "anthropic", AuthMethod: "token"}
@@ -148,9 +146,8 @@ func TestStoreMultiProvider(t *testing.T) {
 
 func TestDeleteCredential(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	homeDirOverride = tmpDir
+	defer func() { homeDirOverride = "" }()
 
 	cred := &AuthCredential{AccessToken: "to-delete", Provider: "openai", AuthMethod: "oauth"}
 	if err := SetCredential("openai", cred); err != nil {
@@ -172,9 +169,8 @@ func TestDeleteCredential(t *testing.T) {
 
 func TestLoadStoreEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	homeDirOverride = tmpDir
+	defer func() { homeDirOverride = "" }()
 
 	store, err := LoadStore()
 	if err != nil {

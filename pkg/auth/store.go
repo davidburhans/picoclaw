@@ -36,8 +36,16 @@ func (c *AuthCredential) NeedsRefresh() bool {
 	return time.Now().Add(5 * time.Minute).After(c.ExpiresAt)
 }
 
+var homeDirOverride = ""
+
 func authFilePath() string {
-	home, _ := os.UserHomeDir()
+	if homeDirOverride != "" {
+		return filepath.Join(homeDirOverride, ".picoclaw", "auth.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
 	return filepath.Join(home, ".picoclaw", "auth.json")
 }
 
