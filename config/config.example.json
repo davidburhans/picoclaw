@@ -52,7 +52,8 @@
       "proxy": "",
       "allow_from": [
         "YOUR_USER_ID"
-      ]
+      ],
+      "mention_only": false
     },
     "discord": {
       "enabled": false,
@@ -265,6 +266,13 @@
   },
   "gateway": {
     "host": "127.0.0.1",
-    "port": 18790
+    "port": 18790,
+    "webhooks": {
+      "github-deploy": {
+        "secret": "your_webhook_secret",
+        "agent": "default",
+        "format": "github"
+      }
+    }
   }
 }

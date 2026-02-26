@@ -276,9 +276,10 @@ type WhatsAppConfig struct {
 
 type TelegramConfig struct {
 	Enabled   bool                `json:"enabled"    env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
-	Token     string              `json:"token"      env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
-	Proxy     string              `json:"proxy"      env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	Token       string              `json:"token"        env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
+	Proxy       string              `json:"proxy"        env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
+	AllowFrom   FlexibleStringSlice `json:"allow_from"   env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	MentionOnly bool                `json:"mention_only" env:"PICOCLAW_CHANNELS_TELEGRAM_MENTION_ONLY"`
 }
 
 type FeishuConfig struct {
@@ -483,9 +484,16 @@ func (c *ModelConfig) Validate() error {
 	return nil
 }
 
+type WebhookConfig struct {
+	Secret string `json:"secret"`
+	Agent  string `json:"agent"`
+	Format string `json:"format"` // e.g. "github", "json"
+}
+
 type GatewayConfig struct {
-	Host string `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
-	Port int    `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
+	Host     string                   `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
+	Port     int                      `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
+	Webhooks map[string]WebhookConfig `json:"webhooks,omitempty"`
 }
 
 type BraveConfig struct {
