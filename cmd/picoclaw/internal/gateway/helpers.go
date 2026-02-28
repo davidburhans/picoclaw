@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -183,6 +184,7 @@ func gatewayCmd(debug bool) error {
 
 	if err := channelManager.StartAll(ctx); err != nil {
 		fmt.Printf("Error starting channels: %v\n", err)
+		return err
 	}
 
 	healthServer.RegisterHandler("/webhook/", webhookHandler(agentLoop, cfg))
@@ -236,7 +238,11 @@ func setupCronTool(
 	cronService := cron.NewCronService(cronStorePath, nil)
 
 	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	cronTool, err := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	if err != nil {
+		log.Fatalf("Critical error during CronTool initialization: %v", err)
+	}
+
 	agentLoop.RegisterTool(cronTool)
 
 	// Set the onJob handler
