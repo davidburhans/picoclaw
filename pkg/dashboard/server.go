@@ -135,33 +135,11 @@ func NewActivityBuffer(size int) *ActivityBuffer {
 }
 
 // Subscribe listens to the message bus and adds events to the buffer.
+// NOTE: The bus.Monitor() API was removed in the upstream refactor (og/main).
+// Activity tracking is currently disabled until an alternative is implemented.
 func (ab *ActivityBuffer) Subscribe(msgBus *bus.MessageBus) {
-	ch := msgBus.Monitor()
-
-	go func() {
-		for msg := range ch {
-			switch m := msg.(type) {
-			case bus.InboundMessage:
-				ab.Add(map[string]interface{}{
-					"time":      time.Now().UnixMilli(),
-					"type":      "inbound",
-					"channel":   m.Channel,
-					"sender":    m.SenderID,
-					"content":   m.Content,
-					"direction": "in",
-				})
-			case bus.OutboundMessage:
-				ab.Add(map[string]interface{}{
-					"time":      time.Now().UnixMilli(),
-					"type":      "outbound",
-					"channel":   m.Channel,
-					"chatID":    m.ChatID,
-					"content":   m.Content,
-					"direction": "out",
-				})
-			}
-		}
-	}() // Note: We should handle close/context if needed, but for dashboard background it's fine.
+	// No-op: bus no longer exposes a Monitor() channel.
+	// TODO: Re-implement using a bus middleware or tap pattern.
 }
 
 // Add adds an event to the buffer.
