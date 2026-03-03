@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# Podman-in-container: make root filesystem shared mount propagation
+doas mount --make-rshared / 2>/dev/null || true
+
 # First-run: neither config nor workspace exists.
 # If config.json is already mounted but workspace is missing we skip onboard to
 # avoid the interactive "Overwrite? (y/n)" prompt hanging in a non-TTY container.
