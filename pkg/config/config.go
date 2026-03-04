@@ -88,17 +88,34 @@ type QdrantConfig struct {
 }
 
 type MCPServerConfig struct {
-	Name               string            `json:"name,omitempty"`
-	Command            string            `json:"command,omitempty"`
-	Args               []string          `json:"args,omitempty"`
-	Env                map[string]string `json:"env,omitempty"`
-	URL                string            `json:"url,omitempty"`
-	Headers            map[string]string `json:"headers,omitempty"`
-	ToolTimeout        int               `json:"toolTimeout,omitempty"`
-	WorkspaceAllowList []string          `json:"workspaceAllowList,omitempty"`
-	WorkspaceDenyList  []string          `json:"workspaceDenyList,omitempty"`
-	ToolAllowList      []string          `json:"toolAllowList,omitempty"`
-	ToolDenyList       []string          `json:"toolDenyList,omitempty"`
+	// Name is the name of the MCP server
+	Name string `json:"name,omitempty"`
+	// Enabled indicates whether this MCP server is active
+	Enabled bool `json:"enabled"`
+	// Command is the executable to run (e.g., "npx", "python", "/path/to/server")
+	Command string `json:"command"`
+	// Args are the arguments to pass to the command
+	Args []string `json:"args,omitempty"`
+	// Env are environment variables to set for the server process (stdio only)
+	Env map[string]string `json:"env,omitempty"`
+	// EnvFile is the path to a file containing environment variables (stdio only)
+	EnvFile string `json:"env_file,omitempty"`
+	// Type is "stdio", "sse", or "http" (default: stdio if command is set, sse if url is set)
+	Type string `json:"type,omitempty"`
+	// URL is used for SSE/HTTP transport
+	URL string `json:"url,omitempty"`
+	// Headers are HTTP headers to send with requests (sse/http only)
+	Headers map[string]string `json:"headers,omitempty"`
+	// ToolTimeout is the timeout for tool calls in seconds
+	ToolTimeout int `json:"toolTimeout,omitempty"`
+	// WorkspaceAllowList is a list of workspace paths this server can access
+	WorkspaceAllowList []string `json:"workspaceAllowList,omitempty"`
+	// WorkspaceDenyList is a list of workspace paths this server cannot access
+	WorkspaceDenyList []string `json:"workspaceDenyList,omitempty"`
+	// ToolAllowList is a list of tools this server can use
+	ToolAllowList []string `json:"toolAllowList,omitempty"`
+	// ToolDenyList is a list of tools this server cannot use
+	ToolDenyList []string `json:"toolDenyList,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -224,6 +241,8 @@ type AgentDefaults struct {
 	MaxTokens                 int             `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature               *float64        `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations         int             `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	SummarizeMessageThreshold int              `json:"summarize_message_threshold"     env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
+	SummarizeTokenPercent     int              `json:"summarize_token_percent"         env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
 	MaxMediaSize              int             `json:"max_media_size,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
 	SafetyLevel               string          `json:"safety_level,omitempty"          env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
 	BirthYear                 int             `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
@@ -254,7 +273,6 @@ type ScheduleRule struct {
 type ScheduleHours struct {
 	Start string `json:"start"`
 	End   string `json:"end"`
-}
 }
 
 // GetModelName returns the effective model name for the agent defaults.
@@ -680,26 +698,6 @@ type ClawHubRegistryConfig struct {
 	Timeout         int    `json:"timeout"           env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_TIMEOUT"`
 	MaxZipSize      int    `json:"max_zip_size"      env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_MAX_ZIP_SIZE"`
 	MaxResponseSize int    `json:"max_response_size" env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_MAX_RESPONSE_SIZE"`
-}
-
-// MCPServerConfig defines configuration for a single MCP server
-type MCPServerConfig struct {
-	// Enabled indicates whether this MCP server is active
-	Enabled bool `json:"enabled"`
-	// Command is the executable to run (e.g., "npx", "python", "/path/to/server")
-	Command string `json:"command"`
-	// Args are the arguments to pass to the command
-	Args []string `json:"args,omitempty"`
-	// Env are environment variables to set for the server process (stdio only)
-	Env map[string]string `json:"env,omitempty"`
-	// EnvFile is the path to a file containing environment variables (stdio only)
-	EnvFile string `json:"env_file,omitempty"`
-	// Type is "stdio", "sse", or "http" (default: stdio if command is set, sse if url is set)
-	Type string `json:"type,omitempty"`
-	// URL is used for SSE/HTTP transport
-	URL string `json:"url,omitempty"`
-	// Headers are HTTP headers to send with requests (sse/http only)
-	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // MCPConfig defines configuration for all MCP servers
