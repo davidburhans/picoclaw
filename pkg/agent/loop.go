@@ -165,6 +165,11 @@ func registerSharedTools(
 			PerplexityAPIKey:     cfg.Tools.Web.Perplexity.APIKey,
 			PerplexityMaxResults: cfg.Tools.Web.Perplexity.MaxResults,
 			PerplexityEnabled:    cfg.Tools.Web.Perplexity.Enabled,
+			GLMSearchAPIKey:      cfg.Tools.Web.GLMSearch.APIKey,
+			GLMSearchBaseURL:     cfg.Tools.Web.GLMSearch.BaseURL,
+			GLMSearchEngine:      cfg.Tools.Web.GLMSearch.SearchEngine,
+			GLMSearchMaxResults:  cfg.Tools.Web.GLMSearch.MaxResults,
+			GLMSearchEnabled:     cfg.Tools.Web.GLMSearch.Enabled,
 			Proxy:                cfg.Tools.Web.Proxy,
 		})
 		if err != nil {
@@ -229,40 +234,23 @@ func registerMCPTools(cfg *config.Config, registry *AgentRegistry) {
 	mcpManager := mcp.NewManager()
 	ctx := context.Background()
 
-	for name, serverCfg := range cfg.MCP {
-		mcpCfg := mcp.MCPServerConfig{
-			Name:               name,
-			Command:            serverCfg.Command,
-			Args:               serverCfg.Args,
-			Env:                serverCfg.Env,
-			URL:                serverCfg.URL,
-			Headers:            serverCfg.Headers,
-			ToolTimeout:        serverCfg.ToolTimeout,
-			WorkspaceAllowList: serverCfg.WorkspaceAllowList,
-			WorkspaceDenyList:  serverCfg.WorkspaceDenyList,
-			ToolAllowList:      serverCfg.ToolAllowList,
-			ToolDenyList:       serverCfg.ToolDenyList,
-		}
-		if err := mcpManager.AddServer(mcpCfg); err != nil {
-			logger.ErrorCF("mcp", fmt.Sprintf("Failed to add MCP server %s", name), map[string]any{"error": err.Error()})
-			continue
-		}
-
-		if err := mcpManager.ConnectServer(ctx, name); err != nil {
-			logger.ErrorCF("mcp", fmt.Sprintf("Failed to connect MCP server %s", name), map[string]any{"error": err.Error()})
-			continue
-		}
-		logger.InfoCF("mcp", fmt.Sprintf("Connected to MCP server %s", name), nil)
+	// Use LoadFromMCPConfig to load all servers at once (upstream API)
+	workspacePath := cfg.WorkspacePath()
+	if err := mcpManager.LoadFromMCPConfig(ctx, cfg.Tools.MCP, workspacePath); err != nil {
+		logger.WarnCF("mcp", "Failed to load MCP servers in registerMCPTools", map[string]any{"error": err.Error()})
+		// Continue - MCP tools just won't be available
 	}
 
 	// Register tools to all agents based on workspace filtering
 	for _, agentID := range registry.ListAgentIDs() {
 		if agent, ok := registry.GetAgent(agentID); ok {
-			for _, toolDef := range mcpManager.GetToolsForWorkspace(agent.Workspace) {
-				agent.Tools.Register(tools.NewMCPTool(mcpManager, toolDef))
+			// Get tools from all servers, filter by workspace in NewMCPTool
+			servers := mcpManager.GetServers()
+			for serverName, conn := range servers {
+				for _, tool := range conn.Tools {
+					agent.Tools.Register(tools.NewMCPTool(mcpManager, serverName, tool))
+				}
 			}
-			// Update context builder with the complete tools registry again
-			agent.ContextBuilder.SetToolsRegistry(agent.Tools)
 		}
 	}
 }
@@ -1094,62 +1082,76 @@ func (al *AgentLoop) runLLMIteration(
 		// Save assistant message with tool calls to session
 		agent.Sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
-		// Execute tool calls
-		for _, tc := range normalizedToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
-				map[string]any{
-					"agent_id":  agent.ID,
-					"tool":      tc.Name,
-					"iteration": iteration,
-				})
+		// Execute tool calls in parallel
+		type indexedAgentResult struct {
+			result *tools.ToolResult
+			tc     providers.ToolCall
+		}
 
-			// Create async callback for tools that implement AsyncTool
-			// NOTE: Following openclaw's design, async tools do NOT send results directly to users.
-			// Instead, they notify the agent via PublishInbound, and the agent decides
-			// whether to forward the result to the user (in processSystemMessage).
-			asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
-				// Log the async completion but don't send directly to user
-				// The agent will handle user notification via processSystemMessage
-				if !result.Silent && result.ForUser != "" {
-					logger.InfoCF("agent", "Async tool completed, agent will handle notification",
-						map[string]any{
-							"tool":        tc.Name,
-							"content_len": len(result.ForUser),
-						})
+		agentResults := make([]indexedAgentResult, len(normalizedToolCalls))
+		var wg sync.WaitGroup
+
+		for i, tc := range normalizedToolCalls {
+			agentResults[i].tc = tc
+
+			wg.Add(1)
+			go func(idx int, tc providers.ToolCall) {
+				defer wg.Done()
+
+				argsJSON, _ := json.Marshal(tc.Arguments)
+				argsPreview := utils.Truncate(string(argsJSON), 200)
+				logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+					map[string]any{
+						"agent_id":  agent.ID,
+						"tool":      tc.Name,
+						"iteration": iteration,
+					})
+
+				// Create async callback for tools that implement AsyncTool
+				asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
+					if !result.Silent && result.ForUser != "" {
+						logger.InfoCF("agent", "Async tool completed, agent will handle notification",
+							map[string]any{
+								"tool":        tc.Name,
+								"content_len": len(result.ForUser),
+							})
+					}
 				}
-			}
 
-			toolResult := agent.Tools.ExecuteWithContext(
-				ctx,
-				tc.Name,
-				tc.Arguments,
-				opts.Channel,
-				opts.ChatID,
-				asyncCallback,
-			)
+				toolResult := agent.Tools.ExecuteWithContext(
+					ctx,
+					tc.Name,
+					tc.Arguments,
+					opts.Channel,
+					opts.ChatID,
+					asyncCallback,
+				)
+				agentResults[idx].result = toolResult
+			}(i, tc)
+		}
+		wg.Wait()
 
+		// Process results in original order (send to user, save to session)
+		for _, r := range agentResults {
 			// Send ForUser content to user immediately if not Silent
-			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
+			if !r.result.Silent && r.result.ForUser != "" && opts.SendResponse {
 				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: opts.Channel,
 					ChatID:  opts.ChatID,
-					Content: toolResult.ForUser,
+					Content: r.result.ForUser,
 				})
 				logger.DebugCF("agent", "Sent tool result to user",
 					map[string]any{
-						"tool":        tc.Name,
-						"content_len": len(toolResult.ForUser),
+						"tool":        r.tc.Name,
+						"content_len": len(r.result.ForUser),
 					})
 			}
 
 			// If tool returned media refs, publish them as outbound media
-			if len(toolResult.Media) > 0 && opts.SendResponse {
-				parts := make([]bus.MediaPart, 0, len(toolResult.Media))
-				for _, ref := range toolResult.Media {
+			if len(r.result.Media) > 0 && opts.SendResponse {
+				parts := make([]bus.MediaPart, 0, len(r.result.Media))
+				for _, ref := range r.result.Media {
 					part := bus.MediaPart{Ref: ref}
-					// Populate metadata from MediaStore when available
 					if al.mediaStore != nil {
 						if _, meta, err := al.mediaStore.ResolveWithMeta(ref); err == nil {
 							part.Filename = meta.Filename
@@ -1167,15 +1169,15 @@ func (al *AgentLoop) runLLMIteration(
 			}
 
 			// Determine content for LLM based on tool result
-			contentForLLM := toolResult.ForLLM
-			if contentForLLM == "" && toolResult.Err != nil {
-				contentForLLM = toolResult.Err.Error()
+			contentForLLM := r.result.ForLLM
+			if contentForLLM == "" && r.result.Err != nil {
+				contentForLLM = r.result.Err.Error()
 			}
 
 			toolResultMsg := providers.Message{
 				Role:       "tool",
 				Content:    contentForLLM,
-				ToolCallID: tc.ID,
+				ToolCallID: r.tc.ID,
 			}
 			messages = append(messages, toolResultMsg)
 

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -123,28 +124,45 @@ func RunToolLoop(
 		}
 		messages = append(messages, assistantMsg)
 
-		// 7. Execute tool calls
-		for _, tc := range normalizedToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
-				map[string]any{
-					"tool":      tc.Name,
-					"iteration": iteration,
-				})
+		// 7. Execute tool calls in parallel (upstream feature)
+		type indexedResult struct {
+			result *ToolResult
+			tc     providers.ToolCall
+		}
 
-			// Execute tool (no async callback for subagents - they run independently)
-			var toolResult *ToolResult
-			if config.Tools != nil {
+		results := make([]indexedResult, len(normalizedToolCalls))
+		var wg sync.WaitGroup
+
+		for i, tc := range normalizedToolCalls {
+			results[i].tc = tc
+
+			wg.Add(1)
+			go func(idx int, tc providers.ToolCall) {
+				defer wg.Done()
+
+				argsJSON, _ := json.Marshal(tc.Arguments)
+				argsPreview := utils.Truncate(string(argsJSON), 200)
+				logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+					map[string]any{
+						"tool":      tc.Name,
+						"iteration": iteration,
+					})
+
+				// Execute tool with timing and metrics (merged from fork)
 				start := time.Now()
-				toolResult = config.Tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, channel, chatID, nil)
+				var toolResult *ToolResult
+				if config.Tools != nil {
+					toolResult = config.Tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, channel, chatID, nil)
+				} else {
+					toolResult = ErrorResult("No tools available")
+				}
 				duration := time.Since(start)
 
+				// Record metrics (from fork)
 				status := "success"
 				if toolResult.Err != nil {
 					status = "error"
 				}
-
 				metrics.DefaultRecorder().RecordToolCall(
 					tc.Name,
 					metrics.AgentTypeFromContext(ctx),
@@ -152,23 +170,24 @@ func RunToolLoop(
 					duration,
 					len(toolResult.ForLLM),
 				)
-			} else {
-				toolResult = ErrorResult("No tools available")
+
+				results[idx].result = toolResult
+			}(i, tc)
+		}
+		wg.Wait()
+
+		// Append results in original order
+		for _, r := range results {
+			contentForLLM := r.result.ForLLM
+			if contentForLLM == "" && r.result.Err != nil {
+				contentForLLM = r.result.Err.Error()
 			}
 
-			// Determine content for LLM
-			contentForLLM := toolResult.ForLLM
-			if contentForLLM == "" && toolResult.Err != nil {
-				contentForLLM = toolResult.Err.Error()
-			}
-
-			// Add tool result message
-			toolResultMsg := providers.Message{
+			messages = append(messages, providers.Message{
 				Role:       "tool",
 				Content:    contentForLLM,
-				ToolCallID: tc.ID,
-			}
-			messages = append(messages, toolResultMsg)
+				ToolCallID: r.tc.ID,
+			})
 		}
 	}
 
