@@ -35,6 +35,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/sipeed/picoclaw/pkg/voice"
 )
 
 type AgentLoop struct {
@@ -48,6 +49,7 @@ type AgentLoop struct {
 	channelManager *channels.Manager
 	memoryManager  *memory.Manager
 	mediaStore     media.MediaStore
+	transcriber    voice.Transcriber
 }
 
 // processOptions configures how a message is processed
@@ -416,6 +418,11 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
 }
 
+// SetTranscriber injects a voice transcriber for audio transcription.
+func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
+	al.transcriber = t
+}
+
 // inferMediaType determines the media type ("image", "audio", "video", "file")
 // from a filename and MIME content type.
 func inferMediaType(filename, contentType string) string {
@@ -557,8 +564,8 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
 	if tool, ok := agent.Tools.Get("message"); ok {
-		if mt, ok := tool.(tools.ContextualTool); ok {
-			mt.SetContext(msg.Channel, msg.ChatID)
+		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
+			resetter.ResetSentInRound()
 		}
 	}
 
@@ -1189,24 +1196,10 @@ func (al *AgentLoop) runLLMIteration(
 	return finalContent, iteration, numTools, nil
 }
 
-// updateToolContexts updates the context for tools that need channel/chatID info.
+// updateToolContexts is now a no-op - channel/chatID context is automatically injected
+// by the tool registry via WithToolContext() at tool execution time.
 func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID string) {
-	// Use ContextualTool interface instead of type assertions
-	if tool, ok := agent.Tools.Get("message"); ok {
-		if mt, ok := tool.(tools.ContextualTool); ok {
-			mt.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := agent.Tools.Get("spawn"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := agent.Tools.Get("subagent"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
+	// No-op: context is now handled by WithToolContext() in the tool registry
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
