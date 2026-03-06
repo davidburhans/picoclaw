@@ -954,6 +954,13 @@ func (al *AgentLoop) runLLMIteration(
 				"tools_json":    formatToolsForLog(providerToolDefs),
 			})
 
+		// Build LLM options
+		llmOpts := map[string]any{
+			"max_tokens":       agent.MaxTokens,
+			"temperature":      agent.Temperature,
+			"prompt_cache_key": agent.ID,
+		}
+
 		// Call LLM with fallback chain if multiple candidates are configured.
 		var response *providers.LLMResponse
 		var err error
