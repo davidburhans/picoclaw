@@ -39,6 +39,14 @@ type AgentInstance struct {
 	SkillsFilter              []string
 	Candidates                []providers.FallbackCandidate
 	Filter                    *safety.Filter
+
+	// Router is non-nil when model routing is configured and the light model
+	// was successfully resolved. It scores each incoming message and decides
+	// whether to route to LightCandidates or stay with Candidates.
+	Router *routing.Router
+	// LightCandidates holds the resolved provider candidates for the light model.
+	// Pre-computed at agent creation to avoid repeated model_list lookups at runtime.
+	LightCandidates []providers.FallbackCandidate
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -182,6 +190,7 @@ func NewAgentInstance(
 
 	candidates := providers.ResolveCandidatesWithLookup(modelCfg, defaults.Provider, resolveFromModelList)
 
+	// Safety filter setup (local feature)
 	filter := safety.NewFilter(defaults.SafetyLevel, defaults.BirthYear)
 	if agentCfg != nil {
 		if agentCfg.SafetyLevel != "" {
@@ -191,6 +200,25 @@ func NewAgentInstance(
 		}
 	}
 	contextBuilder.SetSafetyFilter(filter)
+
+	// Model routing setup: pre-resolve light model candidates at creation time
+	// to avoid repeated model_list lookups on every incoming message.
+	var router *routing.Router
+	var lightCandidates []providers.FallbackCandidate
+	if rc := defaults.Routing; rc != nil && rc.Enabled && rc.LightModel != "" {
+		lightModelCfg := providers.ModelConfig{Primary: rc.LightModel}
+		resolved := providers.ResolveCandidatesWithLookup(lightModelCfg, defaults.Provider, resolveFromModelList)
+		if len(resolved) > 0 {
+			router = routing.New(routing.RouterConfig{
+				LightModel: rc.LightModel,
+				Threshold:  rc.Threshold,
+			})
+			lightCandidates = resolved
+		} else {
+			log.Printf("routing: light_model %q not found in model_list — routing disabled for agent %q",
+				rc.LightModel, agentID)
+		}
+	}
 
 	return &AgentInstance{
 		ID:                        agentID,
@@ -213,6 +241,8 @@ func NewAgentInstance(
 		SkillsFilter:              skillsFilter,
 		Candidates:                candidates,
 		Filter:                    filter,
+		Router:                    router,
+		LightCandidates:           lightCandidates,
 	}
 }
 
