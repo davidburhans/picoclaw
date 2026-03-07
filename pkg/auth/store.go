@@ -41,6 +41,9 @@ func (c *AuthCredential) NeedsRefresh() bool {
 var homeDirOverride = ""
 
 func authFilePath() string {
+	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
+		return filepath.Join(home, "auth.json")
+	}
 	if homeDirOverride != "" {
 		return filepath.Join(homeDirOverride, ".picoclaw", "auth.json")
 	}
