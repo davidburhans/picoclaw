@@ -41,12 +41,21 @@ func (c *AuthCredential) NeedsRefresh() bool {
 var homeDirOverride = ""
 
 func authFilePath() string {
+<<<<<<< HEAD
 	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
 		return filepath.Join(home, "auth.json")
 	}
+=======
+	// Priority 1: Test override (for development/testing)
+>>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	if homeDirOverride != "" {
 		return filepath.Join(homeDirOverride, ".picoclaw", "auth.json")
 	}
+	// Priority 2: PICOCLAW_HOME environment variable (upstream feature)
+	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
+		return filepath.Join(home, "auth.json")
+	}
+	// Priority 3: User home directory with fallback to HOME env var
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		home = os.Getenv("HOME")

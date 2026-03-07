@@ -124,7 +124,7 @@ func RunToolLoop(
 		}
 		messages = append(messages, assistantMsg)
 
-		// 7. Execute tool calls in parallel
+		// 7. Execute tool calls in parallel (upstream feature)
 		type indexedResult struct {
 			result *ToolResult
 			tc     providers.ToolCall
@@ -148,6 +148,8 @@ func RunToolLoop(
 						"iteration": iteration,
 					})
 
+				// Execute tool with timing and metrics (merged from fork)
+				start := time.Now()
 				var toolResult *ToolResult
 				if config.Tools != nil {
 					start := time.Now()
@@ -169,6 +171,21 @@ func RunToolLoop(
 				} else {
 					toolResult = ErrorResult("No tools available")
 				}
+				duration := time.Since(start)
+
+				// Record metrics (from fork)
+				status := "success"
+				if toolResult.Err != nil {
+					status = "error"
+				}
+				metrics.DefaultRecorder().RecordToolCall(
+					tc.Name,
+					metrics.AgentTypeFromContext(ctx),
+					status,
+					duration,
+					len(toolResult.ForLLM),
+				)
+
 				results[idx].result = toolResult
 			}(i, tc)
 		}
