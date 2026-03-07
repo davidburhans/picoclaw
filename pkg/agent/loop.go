@@ -139,17 +139,6 @@ func NewAgentLoop(
 		}
 	}
 
-<<<<<<< HEAD
-	al := &AgentLoop{
-		bus:           msgBus,
-		cfg:           cfg,
-		registry:      registry,
-		state:         stateManager,
-		summarizing:   sync.Map{},
-		fallback:      fallbackChain,
-		memoryManager: memoryManager,
-		cmdRegistry:   commands.NewRegistry(commands.BuiltinDefinitions()),
-=======
 	return &AgentLoop{
 		bus:            msgBus,
 		cfg:            cfg,
@@ -159,7 +148,6 @@ func NewAgentLoop(
 		fallback:       fallbackChain,
 		memoryManager:  memoryManager,
 		cmdRegistry:    commands.NewRegistry(commands.BuiltinDefinitions()),
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	}
 }
 
@@ -807,11 +795,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 3. Save user message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
-<<<<<<< HEAD
-	// 3. Run LLM iteration loop
-=======
 	// 4. Run LLM iteration loop
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	finalContent, iteration, numTools, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
@@ -980,12 +964,6 @@ func (al *AgentLoop) runLLMIteration(
 				"system_prompt_len": len(messages[0].Content),
 			})
 
-<<<<<<< HEAD
-		// Call LLM with fallback chain if multiple candidates are configured.
-		var response *providers.LLMResponse
-		var err error
-
-=======
 		// Log full messages (detailed)
 		logger.DebugCF("agent", "Full LLM request",
 			map[string]any{
@@ -995,7 +973,6 @@ func (al *AgentLoop) runLLMIteration(
 			})
 
 		// Build LLM options
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 		llmOpts := map[string]any{
 			"max_tokens":       agent.MaxTokens,
 			"temperature":      agent.Temperature,

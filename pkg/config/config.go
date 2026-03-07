@@ -89,21 +89,12 @@ type QdrantConfig struct {
 
 // MCPServerConfig defines configuration for a single MCP server
 type MCPServerConfig struct {
-<<<<<<< HEAD
 	// Enabled indicates whether this MCP server is active
 	Enabled bool `json:"enabled"`
 	// Name is an optional alias for the server
 	Name string `json:"name,omitempty"`
 	// Command is the executable to run (e.g., "npx", "python", "/path/to/server")
 	Command string `json:"command,omitempty"`
-=======
-	// Name is the name of the MCP server
-	Name string `json:"name,omitempty"`
-	// Enabled indicates whether this MCP server is active
-	Enabled bool `json:"enabled"`
-	// Command is the executable to run (e.g., "npx", "python", "/path/to/server")
-	Command string `json:"command"`
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	// Args are the arguments to pass to the command
 	Args []string `json:"args,omitempty"`
 	// Env are environment variables to set for the server process (stdio only)
@@ -116,7 +107,6 @@ type MCPServerConfig struct {
 	URL string `json:"url,omitempty"`
 	// Headers are HTTP headers to send with requests (sse/http only)
 	Headers map[string]string `json:"headers,omitempty"`
-<<<<<<< HEAD
 	// ToolTimeout is the maximum time a tool call is allowed to run (seconds)
 	ToolTimeout int `json:"toolTimeout,omitempty"`
 	// WorkspaceAllowList/DenyList restrict which agent workspaces can use this server
@@ -125,18 +115,6 @@ type MCPServerConfig struct {
 	// ToolAllowList/DenyList restrict which specific tools from this server are exposed
 	ToolAllowList []string `json:"toolAllowList,omitempty"`
 	ToolDenyList  []string `json:"toolDenyList,omitempty"`
-=======
-	// ToolTimeout is the timeout for tool calls in seconds
-	ToolTimeout int `json:"toolTimeout,omitempty"`
-	// WorkspaceAllowList is a list of workspace paths this server can access
-	WorkspaceAllowList []string `json:"workspaceAllowList,omitempty"`
-	// WorkspaceDenyList is a list of workspace paths this server cannot access
-	WorkspaceDenyList []string `json:"workspaceDenyList,omitempty"`
-	// ToolAllowList is a list of tools this server can use
-	ToolAllowList []string `json:"toolAllowList,omitempty"`
-	// ToolDenyList is a list of tools this server cannot use
-	ToolDenyList []string `json:"toolDenyList,omitempty"`
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -276,21 +254,14 @@ type AgentDefaults struct {
 	MaxTokens                 int             `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature               *float64        `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations         int             `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-<<<<<<< HEAD
 	SummarizeMessageThreshold int             `json:"summarize_message_threshold"     env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
-=======
-	SummarizeMessageThreshold int              `json:"summarize_message_threshold"     env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	SummarizeTokenPercent     int             `json:"summarize_token_percent"         env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
 	MaxMediaSize              int             `json:"max_media_size,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
 	Routing                   *RoutingConfig  `json:"routing,omitempty"`
 	SafetyLevel               string          `json:"safety_level,omitempty"          env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
 	BirthYear                 int             `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
-<<<<<<< HEAD
-=======
-	Routing                   *RoutingConfig  `json:"routing,omitempty"`
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 }
+
 func (d *AgentDefaults) GetMaxMediaSize() int {
 	if d.MaxMediaSize > 0 {
 		return d.MaxMediaSize
