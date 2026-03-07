@@ -264,7 +264,7 @@ func registerSharedTools(
 		// Spawn tool with allowlist checker
 		if cfg.Tools.IsToolEnabled("spawn") {
 			if cfg.Tools.IsToolEnabled("subagent") {
-				subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
+				subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace)
 				subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 				spawnTool := tools.NewSpawnTool(subagentManager)
 				currentAgentID := agentID
@@ -753,10 +753,8 @@ func (al *AgentLoop) runAgentLoop(
 	agent *AgentInstance,
 	opts processOptions,
 ) (string, error) {
-	startTime := time.Now()
-	// 0. Record last channel for heartbeat notifications (skip internal channels)
+	// 0. Record last channel for heartbeat notifications (skip internal channels and cli)
 	if opts.Channel != "" && opts.ChatID != "" {
-		// Don't record internal channels (cli, system, subagent)
 		if !constants.IsInternalChannel(opts.Channel) {
 			channelKey := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
 			if err := al.RecordLastChannel(channelKey); err != nil {
@@ -768,6 +766,8 @@ func (al *AgentLoop) runAgentLoop(
 			}
 		}
 	}
+
+	startTime := time.Now()
 
 	// 1. Update tool contexts
 	al.updateToolContexts(agent, opts.Channel, opts.ChatID)
@@ -1203,15 +1203,47 @@ func (al *AgentLoop) runLLMIteration(
 						"iteration": iteration,
 					})
 
-				// Create async callback for tools that implement AsyncTool
-				asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
+				// Create async callback for tools that implement AsyncExecutor.
+				// When the background work completes, this publishes the result
+				// as an inbound system message so processSystemMessage routes it
+				// back to the user via the normal agent loop.
+				asyncCallback := func(_ context.Context, result *tools.ToolResult) {
+					// Send ForUser content directly to the user (immediate feedback),
+					// mirroring the synchronous tool execution path.
 					if !result.Silent && result.ForUser != "" {
-						logger.InfoCF("agent", "Async tool completed, agent will handle notification",
-							map[string]any{
-								"tool":        tc.Name,
-								"content_len": len(result.ForUser),
-							})
+						outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer outCancel()
+						_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+							Channel: opts.Channel,
+							ChatID:  opts.ChatID,
+							Content: result.ForUser,
+						})
 					}
+
+					// Determine content for the agent loop (ForLLM or error).
+					content := result.ForLLM
+					if content == "" && result.Err != nil {
+						content = result.Err.Error()
+					}
+					if content == "" {
+						return
+					}
+
+					logger.InfoCF("agent", "Async tool completed, publishing result",
+						map[string]any{
+							"tool":        tc.Name,
+							"content_len": len(content),
+							"channel":     opts.Channel,
+						})
+
+					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer pubCancel()
+					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+						Channel:  "system",
+						SenderID: fmt.Sprintf("async:%s", tc.Name),
+						ChatID:   fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
+						Content:  content,
+					})
 				}
 
 				start := time.Now()
