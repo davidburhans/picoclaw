@@ -79,3 +79,17 @@ func (b *JSONLBackend) Save(key string) error {
 func (b *JSONLBackend) Close() error {
 	return b.store.Close()
 }
+
+// SetMemoryManager is a no-op for JSONLBackend since it uses memory.Store
+// directly for long-term memory integration.
+func (b *JSONLBackend) SetMemoryManager(mm *memory.Manager, workspaceID string) {
+	// JSONLBackend integrates directly with memory.Store for long-term memory
+	// This is a no-op stub to satisfy the SessionStore interface
+}
+
+// Rotate is a no-op for JSONLBackend as it doesn't need session rotation.
+// The JSONL store handles session state automatically.
+func (b *JSONLBackend) Rotate(ctx context.Context, key string) error {
+	// JSONL store doesn't need explicit rotation - handles state automatically
+	return nil
+}
