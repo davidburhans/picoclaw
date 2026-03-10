@@ -61,6 +61,16 @@ type Config struct {
 	Devices   DevicesConfig              `json:"devices"`
 	Memory    MemoryConfig               `json:"memory"`
 	MCP       map[string]MCPServerConfig `json:"mcp,omitempty"`
+	// BuildInfo contains build-time version information
+	BuildInfo BuildInfo `json:"build_info,omitempty"`
+}
+
+// BuildInfo contains build-time version information
+type BuildInfo struct {
+	Version   string `json:"version"`
+	GitCommit string `json:"git_commit"`
+	BuildTime string `json:"build_time"`
+	GoVersion string `json:"go_version"`
 }
 
 type MemoryConfig struct {
@@ -193,10 +203,10 @@ type AgentConfig struct {
 	Name      string            `json:"name,omitempty"`
 	Workspace string            `json:"workspace,omitempty"`
 	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills      []string          `json:"skills,omitempty"`
-	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
-	SafetyLevel string            `json:"safety_level,omitempty"`
-	BirthYear   int               `json:"birth_year,omitempty"`
+	Skills    []string          `json:"skills,omitempty"`
+	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	SafetyLevel string          `json:"safety_level,omitempty"`
+	BirthYear int               `json:"birth_year,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -239,8 +249,6 @@ type RoutingConfig struct {
 	Threshold  float64 `json:"threshold"`   // complexity score in [0,1]; score >= threshold → primary model
 }
 
-const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
-
 type AgentDefaults struct {
 	Workspace                 string          `json:"workspace"                       env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
 	RestrictToWorkspace       bool            `json:"restrict_to_workspace"           env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
@@ -263,13 +271,6 @@ type AgentDefaults struct {
 	BirthYear                 int             `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
 }
 
-func (d *AgentDefaults) GetMaxMediaSize() int {
-	if d.MaxMediaSize > 0 {
-		return d.MaxMediaSize
-	}
-	return DefaultMaxMediaSize
-}
-
 type ScheduleConfig struct {
 	Timezone string         `json:"timezone"`
 	Default  ScheduleRule   `json:"default"`
@@ -288,6 +289,15 @@ type ScheduleHours struct {
 	End   string `json:"end"`
 }
 
+const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
+
+func (d *AgentDefaults) GetMaxMediaSize() int {
+	if d.MaxMediaSize > 0 {
+		return d.MaxMediaSize
+	}
+	return DefaultMaxMediaSize
+}
+
 // GetModelName returns the effective model name for the agent defaults.
 // It prefers the new "model_name" field but falls back to "model" for backward compatibility.
 func (d *AgentDefaults) GetModelName() string {
@@ -302,7 +312,7 @@ type ChannelsConfig struct {
 	Telegram   TelegramConfig   `json:"telegram"`
 	Feishu     FeishuConfig     `json:"feishu"`
 	Discord    DiscordConfig    `json:"discord"`
-	MaixCam    MaixCamConfig    `json:"maxicam"`
+	MaixCam    MaixCamConfig    `json:"maixcam"`
 	QQ         QQConfig         `json:"qq"`
 	DingTalk   DingTalkConfig   `json:"dingtalk"`
 	Slack      SlackConfig      `json:"slack"`
@@ -656,16 +666,9 @@ func (c *ModelConfig) Validate() error {
 	return nil
 }
 
-type WebhookConfig struct {
-	Secret string `json:"secret"`
-	Agent  string `json:"agent"`
-	Format string `json:"format"` // e.g. "github", "json"
-}
-
 type GatewayConfig struct {
-	Host     string                   `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
-	Port     int                      `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
-	Webhooks map[string]WebhookConfig `json:"webhooks,omitempty"`
+	Host string `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
+	Port int    `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
 }
 
 type ToolDiscoveryConfig struct {
