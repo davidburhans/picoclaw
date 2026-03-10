@@ -195,7 +195,7 @@ func NewAgentInstance(
 
 	candidates := providers.ResolveCandidatesWithLookup(modelCfg, defaults.Provider, resolveFromModelList)
 
-	// Safety filter setup (local feature)
+	// Safety filter setup
 	filter := safety.NewFilter(defaults.SafetyLevel, defaults.BirthYear)
 	if agentCfg != nil {
 		if agentCfg.SafetyLevel != "" {

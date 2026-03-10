@@ -45,7 +45,7 @@ func authFilePath() string {
 	if homeDirOverride != "" {
 		return filepath.Join(homeDirOverride, ".picoclaw", "auth.json")
 	}
-	// Priority 2: PICOCLAW_HOME environment variable (upstream feature)
+	// Priority 2: PICOCLAW_HOME environment variable
 	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
 		return filepath.Join(home, "auth.json")
 	}
