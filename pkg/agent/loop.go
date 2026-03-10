@@ -140,14 +140,14 @@ func NewAgentLoop(
 	}
 
 	return &AgentLoop{
-		bus:           msgBus,
-		cfg:           cfg,
-		registry:      registry,
-		state:         stateManager,
-		summarizing:   sync.Map{},
-		fallback:      fallbackChain,
-		memoryManager: memoryManager,
-		cmdRegistry:   commands.NewRegistry(commands.BuiltinDefinitions()),
+		bus:            msgBus,
+		cfg:            cfg,
+		registry:       registry,
+		state:          stateManager,
+		summarizing:    sync.Map{},
+		fallback:       fallbackChain,
+		memoryManager:  memoryManager,
+		cmdRegistry:    commands.NewRegistry(commands.BuiltinDefinitions()),
 	}
 }
 

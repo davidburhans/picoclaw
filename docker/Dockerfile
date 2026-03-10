@@ -21,7 +21,7 @@ RUN make build
 FROM python:3.14-alpine
 RUN apk add --no-cache bitcoin
 
-RUN apk add --no-cache ca-certificates tzdata git make ffmpeg curl wget nodejs npm jq github-cli go gcc musl-dev openssl-dev pkgconfig rust cargo ripgrep podman crun doas fuse-overlayfs
+RUN apk add --no-cache ca-certificates tzdata git make ffmpeg curl wget nodejs npm jq github-cli go gcc musl-dev openssl-dev pkgconfig rust cargo ripgrep podman crun doas fuse-overlayfs openssh-client chromium
 
 # Configure storage driver for rootless podman inside containers
 RUN mkdir -p /etc/containers && \

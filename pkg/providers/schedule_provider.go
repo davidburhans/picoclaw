@@ -130,7 +130,6 @@ func (p *ScheduleProvider) resolveProvider(t time.Time) (LLMProvider, string, er
 		ModelList: p.cfg.ModelList,
 		Gateway:   p.cfg.Gateway,
 		Tools:     p.cfg.Tools,
-		MCP:       p.cfg.MCP,
 		Heartbeat: p.cfg.Heartbeat,
 		Devices:   p.cfg.Devices,
 		Providers: p.cfg.Providers,
