@@ -139,8 +139,7 @@ func NewAgentLoop(
 		}
 	}
 
-<<<<<<< HEAD
-	al := &AgentLoop{
+	return &AgentLoop{
 		bus:           msgBus,
 		cfg:           cfg,
 		registry:      registry,
@@ -149,17 +148,6 @@ func NewAgentLoop(
 		fallback:      fallbackChain,
 		memoryManager: memoryManager,
 		cmdRegistry:   commands.NewRegistry(commands.BuiltinDefinitions()),
-=======
-	return &AgentLoop{
-		bus:            msgBus,
-		cfg:            cfg,
-		registry:       registry,
-		state:          stateManager,
-		summarizing:    sync.Map{},
-		fallback:       fallbackChain,
-		memoryManager:  memoryManager,
-		cmdRegistry:    commands.NewRegistry(commands.BuiltinDefinitions()),
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	}
 }
 
@@ -276,7 +264,7 @@ func registerSharedTools(
 		// Spawn tool with allowlist checker
 		if cfg.Tools.IsToolEnabled("spawn") {
 			if cfg.Tools.IsToolEnabled("subagent") {
-				subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
+				subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace)
 				subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 				spawnTool := tools.NewSpawnTool(subagentManager)
 				currentAgentID := agentID
@@ -369,7 +357,13 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						}
 
 						mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
-						agent.Tools.Register(mcpTool)
+
+						if al.cfg.Tools.MCP.Discovery.Enabled {
+							agent.Tools.RegisterHidden(mcpTool)
+						} else {
+							agent.Tools.Register(mcpTool)
+						}
+
 						totalRegistrations++
 						logger.DebugCF("agent", "Registered MCP tool",
 							map[string]any{
@@ -388,6 +382,47 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					"total_registrations": totalRegistrations,
 					"agent_count":         agentCount,
 				})
+
+			// Initializes Discovery Tools only if enabled by configuration
+			if al.cfg.Tools.MCP.Enabled && al.cfg.Tools.MCP.Discovery.Enabled {
+				useBM25 := al.cfg.Tools.MCP.Discovery.UseBM25
+				useRegex := al.cfg.Tools.MCP.Discovery.UseRegex
+
+				// Fail fast: If discovery is enabled but no search method is turned on
+				if !useBM25 && !useRegex {
+					return fmt.Errorf(
+						"tool discovery is enabled but neither 'use_bm25' nor 'use_regex' is set to true in the configuration",
+					)
+				}
+
+				ttl := al.cfg.Tools.MCP.Discovery.TTL
+				if ttl <= 0 {
+					ttl = 5 // Default value
+				}
+
+				maxSearchResults := al.cfg.Tools.MCP.Discovery.MaxSearchResults
+				if maxSearchResults <= 0 {
+					maxSearchResults = 5 // Default value
+				}
+
+				logger.InfoCF("agent", "Initializing tool discovery", map[string]any{
+					"bm25": useBM25, "regex": useRegex, "ttl": ttl, "max_results": maxSearchResults,
+				})
+
+				for _, agentID := range agentIDs {
+					agent, ok := al.registry.GetAgent(agentID)
+					if !ok {
+						continue
+					}
+
+					if useRegex {
+						agent.Tools.Register(tools.NewRegexSearchTool(agent.Tools, ttl, maxSearchResults))
+					}
+					if useBM25 {
+						agent.Tools.Register(tools.NewBM25SearchTool(agent.Tools, ttl, maxSearchResults))
+					}
+				}
+			}
 		}
 	}
 
@@ -612,15 +647,6 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	}
 
 	route, agent, routeErr := al.resolveMessageRoute(msg)
-
-	// Commands are checked before requiring a successful route.
-	// Global commands (/help, /show, /switch) work even when routing fails;
-	// context-dependent commands check their own Runtime fields and report
-	// "unavailable" when the required capability is nil.
-	if response, handled := al.handleCommand(ctx, msg, agent); handled {
-		return response, nil
-	}
-
 	if routeErr != nil {
 		return "", routeErr
 	}
@@ -654,7 +680,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
-	return al.runAgentLoop(ctx, agent, processOptions{
+	opts := processOptions{
 		SessionKey:      sessionKey,
 		Channel:         msg.Channel,
 		ChatID:          msg.ChatID,
@@ -663,7 +689,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: defaultResponse,
 		EnableSummary:   true,
 		SendResponse:    false,
-	})
+	}
+
+	// context-dependent commands check their own Runtime fields and report
+	// "unavailable" when the required capability is nil.
+	if response, handled := al.handleCommand(ctx, msg, agent, &opts); handled {
+		return response, nil
+	}
+
+	return al.runAgentLoop(ctx, agent, opts)
 }
 
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
@@ -766,9 +800,8 @@ func (al *AgentLoop) runAgentLoop(
 	opts processOptions,
 ) (string, error) {
 	startTime := time.Now()
-	// 0. Record last channel for heartbeat notifications (skip internal channels)
+	// 0. Record last channel for heartbeat notifications (skip internal channels and cli)
 	if opts.Channel != "" && opts.ChatID != "" {
-		// Don't record internal channels (cli, system, subagent)
 		if !constants.IsInternalChannel(opts.Channel) {
 			channelKey := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
 			if err := al.RecordLastChannel(channelKey); err != nil {
@@ -807,11 +840,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 3. Save user message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
-<<<<<<< HEAD
-	// 3. Run LLM iteration loop
-=======
 	// 4. Run LLM iteration loop
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 	finalContent, iteration, numTools, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
@@ -980,12 +1009,6 @@ func (al *AgentLoop) runLLMIteration(
 				"system_prompt_len": len(messages[0].Content),
 			})
 
-<<<<<<< HEAD
-		// Call LLM with fallback chain if multiple candidates are configured.
-		var response *providers.LLMResponse
-		var err error
-
-=======
 		// Log full messages (detailed)
 		logger.DebugCF("agent", "Full LLM request",
 			map[string]any{
@@ -995,7 +1018,6 @@ func (al *AgentLoop) runLLMIteration(
 			})
 
 		// Build LLM options
->>>>>>> c26583fadd8bd00c3b9b53c7e59df50955dc5ab2
 		llmOpts := map[string]any{
 			"max_tokens":       agent.MaxTokens,
 			"temperature":      agent.Temperature,
@@ -1137,9 +1159,12 @@ func (al *AgentLoop) runLLMIteration(
 				"target_channel": al.targetReasoningChannelID(opts.Channel),
 				"channel":        opts.Channel,
 			})
-		// Check if no tool calls - we're done
+		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
+			if finalContent == "" && response.ReasoningContent != "" {
+				finalContent = response.ReasoningContent
+			}
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      agent.ID,
@@ -1226,15 +1251,47 @@ func (al *AgentLoop) runLLMIteration(
 						"iteration": iteration,
 					})
 
-				// Create async callback for tools that implement AsyncTool
-				asyncCallback := func(callbackCtx context.Context, result *tools.ToolResult) {
+				// Create async callback for tools that implement AsyncExecutor.
+				// When the background work completes, this publishes the result
+				// as an inbound system message so processSystemMessage routes it
+				// back to the user via the normal agent loop.
+				asyncCallback := func(_ context.Context, result *tools.ToolResult) {
+					// Send ForUser content directly to the user (immediate feedback),
+					// mirroring the synchronous tool execution path.
 					if !result.Silent && result.ForUser != "" {
-						logger.InfoCF("agent", "Async tool completed, agent will handle notification",
-							map[string]any{
-								"tool":        tc.Name,
-								"content_len": len(result.ForUser),
-							})
+						outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer outCancel()
+						_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+							Channel: opts.Channel,
+							ChatID:  opts.ChatID,
+							Content: result.ForUser,
+						})
 					}
+
+					// Determine content for the agent loop (ForLLM or error).
+					content := result.ForLLM
+					if content == "" && result.Err != nil {
+						content = result.Err.Error()
+					}
+					if content == "" {
+						return
+					}
+
+					logger.InfoCF("agent", "Async tool completed, publishing result",
+						map[string]any{
+							"tool":        tc.Name,
+							"content_len": len(content),
+							"channel":     opts.Channel,
+						})
+
+					pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer pubCancel()
+					_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+						Channel:  "system",
+						SenderID: fmt.Sprintf("async:%s", tc.Name),
+						ChatID:   fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID),
+						Content:  content,
+					})
 				}
 
 				start := time.Now()
@@ -1319,6 +1376,17 @@ func (al *AgentLoop) runLLMIteration(
 			// Save tool result message to session
 			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 		}
+
+		// Tick down TTL of discovered tools after processing tool results.
+		// Only reached when tool calls were made (the loop continues);
+		// the break on no-tool-call responses skips this.
+		// NOTE: This is safe because processMessage is sequential per agent.
+		// If per-agent concurrency is added, TTL consistency between
+		// ToProviderDefs and Get must be re-evaluated.
+		agent.Tools.TickTTL()
+		logger.DebugCF("agent", "TTL tick after tool execution", map[string]any{
+			"agent_id": agent.ID, "iteration": iteration,
+		})
 	}
 
 	return finalContent, iteration, numTools, nil
@@ -1562,10 +1630,20 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 		return
 	}
 
+	const (
+		maxSummarizationMessages = 10
+		llmMaxRetries            = 3
+		llmTemperature           = 0.3
+		fallbackMaxContentLength = 200
+	)
+
 	// Multi-Part Summarization
 	var finalSummary string
-	if len(validMessages) > 10 {
+	if len(validMessages) > maxSummarizationMessages {
 		mid := len(validMessages) / 2
+
+		mid = al.findNearestUserMessage(validMessages, mid)
+
 		part1 := validMessages[:mid]
 		part2 := validMessages[mid:]
 
@@ -1577,18 +1655,9 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 			s1,
 			s2,
 		)
-		resp, err := agent.Provider.Chat(
-			ctx,
-			[]providers.Message{{Role: "user", Content: mergePrompt}},
-			nil,
-			agent.Model,
-			map[string]any{
-				"max_tokens":       1024,
-				"temperature":      0.3,
-				"prompt_cache_key": agent.ID,
-			},
-		)
-		if err == nil {
+
+		resp, err := al.retryLLMCall(ctx, agent, mergePrompt, llmMaxRetries)
+		if err == nil && resp.Content != "" {
 			finalSummary = resp.Content
 		} else {
 			finalSummary = s1 + " " + s2
@@ -1608,6 +1677,68 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 	}
 }
 
+// findNearestUserMessage finds the nearest user message to the given index.
+// It searches backward first, then forward if no user message is found.
+func (al *AgentLoop) findNearestUserMessage(messages []providers.Message, mid int) int {
+	originalMid := mid
+
+	for mid > 0 && messages[mid].Role != "user" {
+		mid--
+	}
+
+	if messages[mid].Role == "user" {
+		return mid
+	}
+
+	mid = originalMid
+	for mid < len(messages) && messages[mid].Role != "user" {
+		mid++
+	}
+
+	if mid < len(messages) {
+		return mid
+	}
+
+	return originalMid
+}
+
+// retryLLMCall calls the LLM with retry logic.
+func (al *AgentLoop) retryLLMCall(
+	ctx context.Context,
+	agent *AgentInstance,
+	prompt string,
+	maxRetries int,
+) (*providers.LLMResponse, error) {
+	const (
+		llmTemperature = 0.3
+	)
+
+	var resp *providers.LLMResponse
+	var err error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		resp, err = agent.Provider.Chat(
+			ctx,
+			[]providers.Message{{Role: "user", Content: prompt}},
+			nil,
+			agent.Model,
+			map[string]any{
+				"max_tokens":       agent.MaxTokens,
+				"temperature":      llmTemperature,
+				"prompt_cache_key": agent.ID,
+			},
+		)
+		if err == nil && resp != nil && resp.Content != "" {
+			return resp, nil
+		}
+		if attempt < maxRetries-1 {
+			time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+		}
+	}
+
+	return resp, err
+}
+
 // summarizeBatch summarizes a batch of messages.
 func (al *AgentLoop) summarizeBatch(
 	ctx context.Context,
@@ -1615,6 +1746,13 @@ func (al *AgentLoop) summarizeBatch(
 	batch []providers.Message,
 	existingSummary string,
 ) (string, error) {
+	const (
+		llmMaxRetries             = 3
+		llmTemperature            = 0.3
+		fallbackMinContentLength  = 200
+		fallbackMaxContentPercent = 10
+	)
+
 	var sb strings.Builder
 	sb.WriteString(
 		"Provide a concise summary of this conversation segment, preserving core context and key points.\n",
@@ -1630,21 +1768,40 @@ func (al *AgentLoop) summarizeBatch(
 	}
 	prompt := sb.String()
 
-	response, err := agent.Provider.Chat(
-		ctx,
-		[]providers.Message{{Role: "user", Content: prompt}},
-		nil,
-		agent.Model,
-		map[string]any{
-			"max_tokens":       1024,
-			"temperature":      0.3,
-			"prompt_cache_key": agent.ID,
-		},
-	)
-	if err != nil {
-		return "", err
+	response, err := al.retryLLMCall(ctx, agent, prompt, llmMaxRetries)
+	if err == nil && response.Content != "" {
+		return strings.TrimSpace(response.Content), nil
 	}
-	return response.Content, nil
+
+	var fallback strings.Builder
+	fallback.WriteString("Conversation summary: ")
+	for i, m := range batch {
+		if i > 0 {
+			fallback.WriteString(" | ")
+		}
+		content := strings.TrimSpace(m.Content)
+		runes := []rune(content)
+		if len(runes) == 0 {
+			fallback.WriteString(fmt.Sprintf("%s: ", m.Role))
+			continue
+		}
+
+		keepLength := len(runes) * fallbackMaxContentPercent / 100
+		if keepLength < fallbackMinContentLength {
+			keepLength = fallbackMinContentLength
+		}
+
+		if keepLength > len(runes) {
+			keepLength = len(runes)
+		}
+
+		content = string(runes[:keepLength])
+		if keepLength < len(runes) {
+			content += "..."
+		}
+		fallback.WriteString(fmt.Sprintf("%s: %s", m.Role, content))
+	}
+	return fallback.String(), nil
 }
 
 // estimateTokens estimates the number of tokens in a message list.
@@ -1663,6 +1820,7 @@ func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
 	agent *AgentInstance,
+	opts *processOptions,
 ) (string, bool) {
 	if !commands.HasCommandPrefix(msg.Content) {
 		return "", false
@@ -1672,7 +1830,7 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
-	rt := al.buildCommandsRuntime(agent)
+	rt := al.buildCommandsRuntime(agent, opts)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -1702,7 +1860,7 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
-func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOptions) *commands.Runtime {
 	rt := &commands.Runtime{
 		Config:          al.cfg,
 		ListAgentIDs:    al.registry.ListAgentIDs,
@@ -1734,6 +1892,20 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtim
 		}
 		rt.RotateSession = func(ctx context.Context, sessionKey string) error {
 			return agent.Sessions.Rotate(ctx, sessionKey)
+		}
+
+		rt.ClearHistory = func() error {
+			if opts == nil {
+				return fmt.Errorf("process options not available")
+			}
+			if agent.Sessions == nil {
+				return fmt.Errorf("sessions not initialized for agent")
+			}
+
+			agent.Sessions.SetHistory(opts.SessionKey, make([]providers.Message, 0))
+			agent.Sessions.SetSummary(opts.SessionKey, "")
+			agent.Sessions.Save(opts.SessionKey)
+			return nil
 		}
 	}
 	return rt
