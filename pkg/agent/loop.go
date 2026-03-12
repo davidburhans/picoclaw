@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,12 +25,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/media"
-	"github.com/sipeed/picoclaw/pkg/memory"
-	"github.com/sipeed/picoclaw/pkg/memory/embedding"
-	"github.com/sipeed/picoclaw/pkg/memory/qdrant"
-	"github.com/sipeed/picoclaw/pkg/metrics"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/skills"
@@ -48,10 +44,10 @@ type AgentLoop struct {
 	summarizing    sync.Map
 	fallback       *providers.FallbackChain
 	channelManager *channels.Manager
-	memoryManager  *memory.Manager
 	mediaStore     media.MediaStore
 	transcriber    voice.Transcriber
 	cmdRegistry    *commands.Registry
+	mcp            mcpRuntime
 }
 
 // processOptions configures how a message is processed
@@ -82,14 +78,10 @@ func NewAgentLoop(
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
 ) *AgentLoop {
-	provider = providers.WrapWithMetrics(provider)
 	registry := NewAgentRegistry(cfg, provider)
 
 	// Register shared tools to all agents
 	registerSharedTools(cfg, msgBus, registry, provider)
-
-	// Register MCP tools from configured servers
-	registerMCPTools(cfg, registry)
 
 	// Set up shared fallback chain
 	cooldown := providers.NewCooldownTracker()
@@ -102,53 +94,17 @@ func NewAgentLoop(
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
-	var memoryManager *memory.Manager
-	if cfg.Memory.Enabled {
-		if strings.ToLower(cfg.Memory.Provider) == "qdrant" {
-			db, err := qdrant.NewClient(cfg.Memory.Qdrant.URL, cfg.Memory.Qdrant.APIKey)
-			if err != nil {
-				logger.ErrorCF("agent", "Failed to initialize Qdrant client", map[string]interface{}{"error": err})
-			} else {
-				embedConfig := cfg.Memory.Embedding
-				if cfg.Memory.Qdrant.ModelName != "" {
-					if mCfg, err := cfg.GetModelConfig(cfg.Memory.Qdrant.ModelName); err == nil {
-						parts := strings.SplitN(mCfg.Model, "/", 2)
-						provider := "openai"
-						if len(parts) > 1 {
-							provider = parts[0]
-						}
-						embedConfig.Provider = provider
-						embedConfig.Model = mCfg.Model
-						if mCfg.APIBase != "" {
-							embedConfig.BaseURL = mCfg.APIBase
-						}
-						embedConfig.APIKey = mCfg.APIKey
-					}
-				}
-				embedder := embedding.NewClient(embedConfig)
-				memoryManager = memory.NewManager(cfg.Memory, db, embedder)
-				logger.InfoCF("agent", "Long-term memory enabled", map[string]interface{}{"provider": "qdrant"})
-
-				// Provide memoryManager to all agents
-				for _, agentID := range registry.ListAgentIDs() {
-					if agent, ok := registry.GetAgent(agentID); ok {
-						agent.Sessions.SetMemoryManager(memoryManager, agent.Workspace)
-					}
-				}
-			}
-		}
+	al := &AgentLoop{
+		bus:         msgBus,
+		cfg:         cfg,
+		registry:    registry,
+		state:       stateManager,
+		summarizing: sync.Map{},
+		fallback:    fallbackChain,
+		cmdRegistry: commands.NewRegistry(commands.BuiltinDefinitions()),
 	}
 
-	return &AgentLoop{
-		bus:            msgBus,
-		cfg:            cfg,
-		registry:       registry,
-		state:          stateManager,
-		summarizing:    sync.Map{},
-		fallback:       fallbackChain,
-		memoryManager:  memoryManager,
-		cmdRegistry:    commands.NewRegistry(commands.BuiltinDefinitions()),
-	}
+	return al
 }
 
 // registerSharedTools registers tools that are shared across all agents (web, message, spawn).
@@ -281,151 +237,10 @@ func registerSharedTools(
 	}
 }
 
-// registerMCPTools connects to configured MCP servers and registers their tools
-func registerMCPTools(cfg *config.Config, registry *AgentRegistry) {
-	if len(cfg.MCP) == 0 {
-		return
-	}
-
-	mcpManager := mcp.NewManager()
-	ctx := context.Background()
-
-	// Use LoadFromMCPConfig to load all servers at once (upstream API)
-	workspacePath := cfg.WorkspacePath()
-	if err := mcpManager.LoadFromMCPConfig(ctx, cfg.Tools.MCP, workspacePath); err != nil {
-		logger.WarnCF("mcp", "Failed to load MCP servers in registerMCPTools", map[string]any{"error": err.Error()})
-		// Continue - MCP tools just won't be available
-	}
-
-	// Register tools to all agents based on workspace filtering
-	for _, agentID := range registry.ListAgentIDs() {
-		if agent, ok := registry.GetAgent(agentID); ok {
-			// Get tools from all servers, filter by workspace in NewMCPTool
-			servers := mcpManager.GetServers()
-			for serverName, conn := range servers {
-				for _, tool := range conn.Tools {
-					agent.Tools.Register(tools.NewMCPTool(mcpManager, serverName, tool))
-				}
-			}
-		}
-	}
-}
-
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
-
-	// Initialize MCP servers for all agents
-	if al.cfg.Tools.IsToolEnabled("mcp") {
-		mcpManager := mcp.NewManager()
-		// Ensure MCP connections are cleaned up on exit, regardless of initialization success
-		// This fixes resource leak when LoadFromMCPConfig partially succeeds then fails
-		defer func() {
-			if err := mcpManager.Close(); err != nil {
-				logger.ErrorCF("agent", "Failed to close MCP manager",
-					map[string]any{
-						"error": err.Error(),
-					})
-			}
-		}()
-
-		defaultAgent := al.registry.GetDefaultAgent()
-		var workspacePath string
-		if defaultAgent != nil && defaultAgent.Workspace != "" {
-			workspacePath = defaultAgent.Workspace
-		} else {
-			workspacePath = al.cfg.WorkspacePath()
-		}
-
-		if err := mcpManager.LoadFromMCPConfig(ctx, al.cfg.Tools.MCP, workspacePath); err != nil {
-			logger.WarnCF("agent", "Failed to load MCP servers, MCP tools will not be available",
-				map[string]any{
-					"error": err.Error(),
-				})
-		} else {
-			// Register MCP tools for all agents
-			servers := mcpManager.GetServers()
-			uniqueTools := 0
-			totalRegistrations := 0
-			agentIDs := al.registry.ListAgentIDs()
-			agentCount := len(agentIDs)
-
-			for serverName, conn := range servers {
-				uniqueTools += len(conn.Tools)
-				for _, tool := range conn.Tools {
-					for _, agentID := range agentIDs {
-						agent, ok := al.registry.GetAgent(agentID)
-						if !ok {
-							continue
-						}
-
-						mcpTool := tools.NewMCPTool(mcpManager, serverName, tool)
-
-						if al.cfg.Tools.MCP.Discovery.Enabled {
-							agent.Tools.RegisterHidden(mcpTool)
-						} else {
-							agent.Tools.Register(mcpTool)
-						}
-
-						totalRegistrations++
-						logger.DebugCF("agent", "Registered MCP tool",
-							map[string]any{
-								"agent_id": agentID,
-								"server":   serverName,
-								"tool":     tool.Name,
-								"name":     mcpTool.Name(),
-							})
-					}
-				}
-			}
-			logger.InfoCF("agent", "MCP tools registered successfully",
-				map[string]any{
-					"server_count":        len(servers),
-					"unique_tools":        uniqueTools,
-					"total_registrations": totalRegistrations,
-					"agent_count":         agentCount,
-				})
-
-			// Initializes Discovery Tools only if enabled by configuration
-			if al.cfg.Tools.MCP.Enabled && al.cfg.Tools.MCP.Discovery.Enabled {
-				useBM25 := al.cfg.Tools.MCP.Discovery.UseBM25
-				useRegex := al.cfg.Tools.MCP.Discovery.UseRegex
-
-				// Fail fast: If discovery is enabled but no search method is turned on
-				if !useBM25 && !useRegex {
-					return fmt.Errorf(
-						"tool discovery is enabled but neither 'use_bm25' nor 'use_regex' is set to true in the configuration",
-					)
-				}
-
-				ttl := al.cfg.Tools.MCP.Discovery.TTL
-				if ttl <= 0 {
-					ttl = 5 // Default value
-				}
-
-				maxSearchResults := al.cfg.Tools.MCP.Discovery.MaxSearchResults
-				if maxSearchResults <= 0 {
-					maxSearchResults = 5 // Default value
-				}
-
-				logger.InfoCF("agent", "Initializing tool discovery", map[string]any{
-					"bm25": useBM25, "regex": useRegex, "ttl": ttl, "max_results": maxSearchResults,
-				})
-
-				for _, agentID := range agentIDs {
-					agent, ok := al.registry.GetAgent(agentID)
-					if !ok {
-						continue
-					}
-
-					if useRegex {
-						agent.Tools.Register(tools.NewRegexSearchTool(agent.Tools, ttl, maxSearchResults))
-					}
-					if useBM25 {
-						agent.Tools.Register(tools.NewBM25SearchTool(agent.Tools, ttl, maxSearchResults))
-					}
-				}
-			}
-		}
+	if err := al.ensureMCPInitialized(ctx); err != nil {
+		return err
 	}
 
 	for al.running.Load() {
@@ -505,6 +320,17 @@ func (al *AgentLoop) Stop() {
 
 // Close releases resources held by agent session stores. Call after Stop.
 func (al *AgentLoop) Close() {
+	mcpManager := al.mcp.takeManager()
+
+	if mcpManager != nil {
+		if err := mcpManager.Close(); err != nil {
+			logger.ErrorCF("agent", "Failed to close MCP manager",
+				map[string]any{
+					"error": err.Error(),
+				})
+		}
+	}
+
 	al.registry.Close()
 }
 
@@ -532,9 +358,106 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	})
 }
 
-// SetTranscriber injects a voice transcriber for audio transcription.
+// SetTranscriber injects a voice transcriber for agent-level audio transcription.
 func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 	al.transcriber = t
+}
+
+var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
+
+// transcribeAudioInMessage resolves audio media refs, transcribes them, and
+// replaces audio annotations in msg.Content with the transcribed text.
+// Returns the (possibly modified) message and true if audio was transcribed.
+func (al *AgentLoop) transcribeAudioInMessage(ctx context.Context, msg bus.InboundMessage) (bus.InboundMessage, bool) {
+	if al.transcriber == nil || al.mediaStore == nil || len(msg.Media) == 0 {
+		return msg, false
+	}
+
+	// Transcribe each audio media ref in order.
+	var transcriptions []string
+	for _, ref := range msg.Media {
+		path, meta, err := al.mediaStore.ResolveWithMeta(ref)
+		if err != nil {
+			logger.WarnCF("voice", "Failed to resolve media ref", map[string]any{"ref": ref, "error": err})
+			continue
+		}
+		if !utils.IsAudioFile(meta.Filename, meta.ContentType) {
+			continue
+		}
+		result, err := al.transcriber.Transcribe(ctx, path)
+		if err != nil {
+			logger.WarnCF("voice", "Transcription failed", map[string]any{"ref": ref, "error": err})
+			transcriptions = append(transcriptions, "")
+			continue
+		}
+		transcriptions = append(transcriptions, result.Text)
+	}
+
+	if len(transcriptions) == 0 {
+		return msg, false
+	}
+
+	al.sendTranscriptionFeedback(ctx, msg.Channel, msg.ChatID, msg.MessageID, transcriptions)
+
+	// Replace audio annotations sequentially with transcriptions.
+	idx := 0
+	newContent := audioAnnotationRe.ReplaceAllStringFunc(msg.Content, func(match string) string {
+		if idx >= len(transcriptions) {
+			return match
+		}
+		text := transcriptions[idx]
+		idx++
+		return "[voice: " + text + "]"
+	})
+
+	// Append any remaining transcriptions not matched by an annotation.
+	for ; idx < len(transcriptions); idx++ {
+		newContent += "\n[voice: " + transcriptions[idx] + "]"
+	}
+
+	msg.Content = newContent
+	return msg, true
+}
+
+// sendTranscriptionFeedback sends feedback to the user with the result of
+// audio transcription if the option is enabled. It uses Manager.SendMessage
+// which executes synchronously (rate limiting, splitting, retry) so that
+// ordering with the subsequent placeholder is guaranteed.
+func (al *AgentLoop) sendTranscriptionFeedback(
+	ctx context.Context,
+	channel, chatID, messageID string,
+	validTexts []string,
+) {
+	if !al.cfg.Voice.EchoTranscription {
+		return
+	}
+	if al.channelManager == nil {
+		return
+	}
+
+	var nonEmpty []string
+	for _, t := range validTexts {
+		if t != "" {
+			nonEmpty = append(nonEmpty, t)
+		}
+	}
+
+	var feedbackMsg string
+	if len(nonEmpty) > 0 {
+		feedbackMsg = "Transcript: " + strings.Join(nonEmpty, "\n")
+	} else {
+		feedbackMsg = "No voice detected in the audio"
+	}
+
+	err := al.channelManager.SendMessage(ctx, bus.OutboundMessage{
+		Channel:          channel,
+		ChatID:           chatID,
+		Content:          feedbackMsg,
+		ReplyToMessageID: messageID,
+	})
+	if err != nil {
+		logger.WarnCF("voice", "Failed to send transcription feedback", map[string]any{"error": err.Error()})
+	}
 }
 
 // inferMediaType determines the media type ("image", "audio", "video", "file")
@@ -596,6 +519,10 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 	ctx context.Context,
 	content, sessionKey, channel, chatID string,
 ) (string, error) {
+	if err := al.ensureMCPInitialized(ctx); err != nil {
+		return "", err
+	}
+
 	msg := bus.InboundMessage{
 		Channel:    channel,
 		SenderID:   "cron",
@@ -648,6 +575,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		},
 	)
 
+	var hadAudio bool
+	msg, hadAudio = al.transcribeAudioInMessage(ctx, msg)
+
+	// For audio messages the placeholder was deferred by the channel.
+	// Now that transcription (and optional feedback) is done, send it.
+	if hadAudio && al.channelManager != nil {
+		al.channelManager.SendPlaceholder(ctx, msg.Channel, msg.ChatID)
+	}
+
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
 		return al.processSystemMessage(ctx, msg)
@@ -662,14 +598,6 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	if tool, ok := agent.Tools.Get("message"); ok {
 		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
 			resetter.ResetSentInRound()
-		}
-	}
-
-	// Safety check on input
-	if agent.Filter != nil {
-		if blocked, reason := agent.Filter.CheckContent(msg.Content); blocked {
-			logger.WarnCF("safety", "Inbound message blocked", map[string]any{"reason": reason, "agent_id": agent.ID})
-			return "I cannot process this message due to safety filters: " + reason, nil
 		}
 	}
 
@@ -820,12 +748,7 @@ func (al *AgentLoop) runAgentLoop(
 		}
 	}
 
-	startTime := time.Now()
-
-	// 1. Update tool contexts
-	al.updateToolContexts(agent, opts.Channel, opts.ChatID)
-
-	// 2. Build messages (skip history for heartbeat)
+	// 1. Build messages (skip history for heartbeat)
 	var history []providers.Message
 	var summary string
 	if !opts.NoHistory {
@@ -845,44 +768,33 @@ func (al *AgentLoop) runAgentLoop(
 	maxMediaSize := al.cfg.Agents.Defaults.GetMaxMediaSize()
 	messages = resolveMediaRefs(messages, al.mediaStore, maxMediaSize)
 
-	// 3. Save user message to session
+	// 2. Save user message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
-	// 4. Run LLM iteration loop
-	finalContent, iteration, numTools, err := al.runLLMIteration(ctx, agent, messages, opts)
+	// 3. Run LLM iteration loop
+	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
-	}
-
-	// Safety check on output
-	if agent.Filter != nil && finalContent != "" {
-		check := agent.Filter.CheckResponse(finalContent)
-		if !check.Safe {
-			logger.WarnCF("safety", "Outbound message blocked", map[string]any{"reason": check.Reason, "agent_id": agent.ID})
-			finalContent = check.BlockedMessage
-		} else if check.NeedsApproval {
-			logger.InfoCF("safety", "Outbound message needs approval", map[string]any{"reason": check.Reason, "agent_id": agent.ID})
-		}
 	}
 
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
 	// This is controlled by the tool's Silent flag and ForUser content
 
-	// 5. Handle empty response
+	// 4. Handle empty response
 	if finalContent == "" {
 		finalContent = opts.DefaultResponse
 	}
 
-	// 6. Save final assistant message to session
+	// 5. Save final assistant message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
 	agent.Sessions.Save(opts.SessionKey)
 
-	// 7. Optional: summarization
+	// 6. Optional: summarization
 	if opts.EnableSummary {
 		al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
-	// 8. Optional: send response via bus
+	// 7. Optional: send response via bus
 	if opts.SendResponse {
 		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
@@ -891,7 +803,7 @@ func (al *AgentLoop) runAgentLoop(
 		})
 	}
 
-	// 9. Log response
+	// 8. Log response
 	responsePreview := utils.Truncate(finalContent, 120)
 	logger.InfoCF("agent", fmt.Sprintf("Response: %s", responsePreview),
 		map[string]any{
@@ -900,20 +812,6 @@ func (al *AgentLoop) runAgentLoop(
 			"iterations":   iteration,
 			"final_length": len(finalContent),
 		})
-
-	agentType := "main"
-	if opts.SessionKey == "heartbeat" {
-		agentType = "heartbeat"
-	}
-	metrics.DefaultRecorder().RecordAgentTurn(
-		agent.Model,
-		opts.Channel,
-		agent.Workspace,
-		agentType,
-		time.Since(startTime),
-		iteration,
-		numTools,
-	)
 
 	return finalContent, nil
 }
@@ -980,9 +878,8 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
-) (string, int, int, error) {
+) (string, int, error) {
 	iteration := 0
-	numTools := 0
 	var finalContent string
 
 	// Determine effective model tier for this conversation turn.
@@ -1025,16 +922,25 @@ func (al *AgentLoop) runLLMIteration(
 				"tools_json":    formatToolsForLog(providerToolDefs),
 			})
 
-		// Build LLM options
+		// Call LLM with fallback chain if multiple candidates are configured.
+		var response *providers.LLMResponse
+		var err error
+
 		llmOpts := map[string]any{
 			"max_tokens":       agent.MaxTokens,
 			"temperature":      agent.Temperature,
 			"prompt_cache_key": agent.ID,
 		}
-
-		// Call LLM with fallback chain if multiple candidates are configured.
-		var response *providers.LLMResponse
-		var err error
+		// parseThinkingLevel guarantees ThinkingOff for empty/unknown values,
+		// so checking != ThinkingOff is sufficient.
+		if agent.ThinkingLevel != ThinkingOff {
+			if tc, ok := agent.Provider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
+				llmOpts["thinking_level"] = string(agent.ThinkingLevel)
+			} else {
+				logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
+					map[string]any{"agent_id": agent.ID, "thinking_level": string(agent.ThinkingLevel)})
+			}
+		}
 
 		callLLM := func() (*providers.LLMResponse, error) {
 			if len(activeCandidates) > 1 && al.fallback != nil {
@@ -1042,17 +948,7 @@ func (al *AgentLoop) runLLMIteration(
 					ctx,
 					activeCandidates,
 					func(ctx context.Context, provider, model string) (*providers.LLMResponse, error) {
-						return agent.Provider.Chat(
-							ctx,
-							messages,
-							providerToolDefs,
-							model,
-							map[string]any{
-								"max_tokens":       agent.MaxTokens,
-								"temperature":      agent.Temperature,
-								"prompt_cache_key": agent.ID,
-							},
-						)
+						return agent.Provider.Chat(ctx, messages, providerToolDefs, model, llmOpts)
 					},
 				)
 				if fbErr != nil {
@@ -1147,7 +1043,7 @@ func (al *AgentLoop) runLLMIteration(
 					"iteration": iteration,
 					"error":     err.Error(),
 				})
-			return "", iteration, numTools, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		go al.handleReasoning(
@@ -1186,7 +1082,6 @@ func (al *AgentLoop) runLLMIteration(
 		for _, tc := range response.ToolCalls {
 			normalizedToolCalls = append(normalizedToolCalls, providers.NormalizeToolCall(tc))
 		}
-		numTools += len(normalizedToolCalls)
 
 		// Log tool calls
 		toolNames := make([]string, 0, len(normalizedToolCalls))
@@ -1302,7 +1197,6 @@ func (al *AgentLoop) runLLMIteration(
 					})
 				}
 
-				start := time.Now()
 				toolResult := agent.Tools.ExecuteWithContext(
 					ctx,
 					tc.Name,
@@ -1311,21 +1205,6 @@ func (al *AgentLoop) runLLMIteration(
 					opts.ChatID,
 					asyncCallback,
 				)
-				duration := time.Since(start)
-
-				status := "success"
-				if toolResult.Err != nil {
-					status = "error"
-				}
-
-				metrics.DefaultRecorder().RecordToolCall(
-					tc.Name,
-					metrics.AgentTypeFromContext(ctx),
-					status,
-					duration,
-					len(toolResult.ForLLM),
-				)
-
 				agentResults[idx].result = toolResult
 			}(i, tc)
 		}
@@ -1397,13 +1276,7 @@ func (al *AgentLoop) runLLMIteration(
 		})
 	}
 
-	return finalContent, iteration, numTools, nil
-}
-
-// updateToolContexts is now a no-op - channel/chatID context is automatically injected
-// by the tool registry via WithToolContext() at tool execution time.
-func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID string) {
-	// No-op: context is now handled by WithToolContext() in the tool registry
+	return finalContent, iteration, nil
 }
 
 // selectCandidates returns the model candidates and resolved model name to use
@@ -1448,9 +1321,9 @@ func (al *AgentLoop) selectCandidates(
 func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, chatID string) {
 	newHistory := agent.Sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
-	threshold := agent.ContextWindow * 75 / 100
+	threshold := agent.ContextWindow * agent.SummarizeTokenPercent / 100
 
-	if len(newHistory) > 20 || tokenEstimate > threshold {
+	if len(newHistory) > agent.SummarizeMessageThreshold || tokenEstimate > threshold {
 		summarizeKey := agent.ID + ":" + sessionKey
 		if _, loading := al.summarizing.LoadOrStore(summarizeKey, true); !loading {
 			go func() {
@@ -1843,11 +1716,10 @@ func (al *AgentLoop) handleCommand(
 
 	var commandReply string
 	result := executor.Execute(ctx, commands.Request{
-		Channel:    msg.Channel,
-		ChatID:     msg.ChatID,
-		SenderID:   msg.SenderID,
-		SessionKey: msg.SessionKey,
-		Text:       msg.Content,
+		Channel:  msg.Channel,
+		ChatID:   msg.ChatID,
+		SenderID: msg.SenderID,
+		Text:     msg.Content,
 		Reply: func(text string) error {
 			commandReply = text
 			return nil
@@ -1897,9 +1769,6 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			oldModel := agent.Model
 			agent.Model = value
 			return oldModel, nil
-		}
-		rt.RotateSession = func(ctx context.Context, sessionKey string) error {
-			return agent.Sessions.Rotate(ctx, sessionKey)
 		}
 
 		rt.ClearHistory = func() error {

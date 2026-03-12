@@ -355,6 +355,14 @@ func DefaultConfig() *Config {
 				APIKey:    "",
 			},
 
+			// LongCat - https://longcat.chat/platform
+			{
+				ModelName: "LongCat-Flash-Thinking",
+				Model:     "longcat/LongCat-Flash-Thinking",
+				APIBase:   "https://api.longcat.chat/openai",
+				APIKey:    "",
+			},
+
 			// VLLM (local) - http://localhost:8000
 			{
 				ModelName: "local-model",
@@ -427,6 +435,7 @@ func DefaultConfig() *Config {
 					Enabled: true,
 				},
 				EnableDenyPatterns: true,
+				AllowRemote:        true,
 				TimeoutSeconds:     60,
 			},
 			Skills: SkillsToolsConfig{
@@ -509,6 +518,9 @@ func DefaultConfig() *Config {
 		Devices: DevicesConfig{
 			Enabled:    false,
 			MonitorUSB: true,
+		},
+		Voice: VoiceConfig{
+			EchoTranscription: false,
 		},
 		BuildInfo: BuildInfo{
 			Version:   Version,
