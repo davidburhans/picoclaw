@@ -253,9 +253,9 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
 
-	services.HealthServer.RegisterHandler("/webhook/", webhookHandler(agentLoop, cfg))
+	runningServices.HealthServer.RegisterHandler("/webhook/", webhookHandler(agentLoop, cfg))
 	go func() {
-		if err := services.HealthServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := runningServices.HealthServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.ErrorCF("health", "Health server error", map[string]any{"error": err.Error()})
 		}
 	}()
