@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
 
+	"github.com/sipeed/picoclaw/pkg/credential"
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
 
@@ -16,6 +19,8 @@ var rrCounter atomic.Uint64
 
 // FlexibleStringSlice is a []string that also accepts JSON numbers,
 // so allow_from can contain both "123" and 123.
+// It also supports parsing comma-separated strings from environment variables,
+// including both English (,) and Chinese (，) commas.
 type FlexibleStringSlice []string
 
 func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
@@ -47,6 +52,30 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// UnmarshalText implements encoding.TextUnmarshaler to support env variable parsing.
+// It handles comma-separated values with both English (,) and Chinese (，) commas.
+func (f *FlexibleStringSlice) UnmarshalText(text []byte) error {
+	if len(text) == 0 {
+		*f = nil
+		return nil
+	}
+
+	s := string(text)
+	// Replace Chinese comma with English comma, then split
+	s = strings.ReplaceAll(s, "，", ",")
+	parts := strings.Split(s, ",")
+
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	*f = result
+	return nil
+}
+
 type Config struct {
 	Agents    AgentsConfig               `json:"agents"`
 	Bindings  []AgentBinding             `json:"bindings,omitempty"`
@@ -60,6 +89,9 @@ type Config struct {
 	Devices   DevicesConfig              `json:"devices"`
 	Memory    MemoryConfig               `json:"memory"`
 	MCP       map[string]MCPServerConfig `json:"mcp,omitempty"`
+	Voice     VoiceConfig                `json:"voice"`
+	// BuildInfo contains build-time version information
+	BuildInfo BuildInfo `json:"build_info,omitempty"`
 }
 
 type MemoryConfig struct {
@@ -115,6 +147,14 @@ type MCPServerConfig struct {
 	// ToolAllowList/DenyList restrict which specific tools from this server are exposed
 	ToolAllowList []string `json:"toolAllowList,omitempty"`
 	ToolDenyList  []string `json:"toolDenyList,omitempty"`
+}
+
+// BuildInfo contains build-time version information
+type BuildInfo struct {
+	Version   string `json:"version"`
+	GitCommit string `json:"git_commit"`
+	BuildTime string `json:"build_time"`
+	GoVersion string `json:"go_version"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -237,6 +277,7 @@ type RoutingConfig struct {
 	LightModel string  `json:"light_model"` // model_name from model_list to use for simple tasks
 	Threshold  float64 `json:"threshold"`   // complexity score in [0,1]; score >= threshold → primary model
 }
+
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
 
@@ -392,6 +433,8 @@ type QQConfig struct {
 	AppSecret          string              `json:"app_secret"              env:"PICOCLAW_CHANNELS_QQ_APP_SECRET"`
 	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_QQ_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
+	MaxMessageLength   int                 `json:"max_message_length"      env:"PICOCLAW_CHANNELS_QQ_MAX_MESSAGE_LENGTH"`
+	SendMarkdown       bool                `json:"send_markdown"           env:"PICOCLAW_CHANNELS_QQ_SEND_MARKDOWN"`
 	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_QQ_REASONING_CHANNEL_ID"`
 }
 
@@ -416,16 +459,17 @@ type SlackConfig struct {
 }
 
 type MatrixConfig struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_MATRIX_ENABLED"`
-	Homeserver         string              `json:"homeserver"              env:"PICOCLAW_CHANNELS_MATRIX_HOMESERVER"`
-	UserID             string              `json:"user_id"                 env:"PICOCLAW_CHANNELS_MATRIX_USER_ID"`
-	AccessToken        string              `json:"access_token"            env:"PICOCLAW_CHANNELS_MATRIX_ACCESS_TOKEN"`
-	DeviceID           string              `json:"device_id,omitempty"     env:"PICOCLAW_CHANNELS_MATRIX_DEVICE_ID"`
-	JoinOnInvite       bool                `json:"join_on_invite"          env:"PICOCLAW_CHANNELS_MATRIX_JOIN_ON_INVITE"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_MATRIX_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                  env:"PICOCLAW_CHANNELS_MATRIX_ENABLED"`
+	Homeserver         string              `json:"homeserver"               env:"PICOCLAW_CHANNELS_MATRIX_HOMESERVER"`
+	UserID             string              `json:"user_id"                  env:"PICOCLAW_CHANNELS_MATRIX_USER_ID"`
+	AccessToken        string              `json:"access_token"             env:"PICOCLAW_CHANNELS_MATRIX_ACCESS_TOKEN"`
+	DeviceID           string              `json:"device_id,omitempty"      env:"PICOCLAW_CHANNELS_MATRIX_DEVICE_ID"`
+	JoinOnInvite       bool                `json:"join_on_invite"           env:"PICOCLAW_CHANNELS_MATRIX_JOIN_ON_INVITE"`
+	MessageFormat      string              `json:"message_format,omitempty" env:"PICOCLAW_CHANNELS_MATRIX_MESSAGE_FORMAT"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"               env:"PICOCLAW_CHANNELS_MATRIX_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_MATRIX_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"     env:"PICOCLAW_CHANNELS_MATRIX_REASONING_CHANNEL_ID"`
 }
 
 type LINEConfig struct {
@@ -539,6 +583,10 @@ type DevicesConfig struct {
 	MonitorUSB bool `json:"monitor_usb" env:"PICOCLAW_DEVICES_MONITOR_USB"`
 }
 
+type VoiceConfig struct {
+	EchoTranscription bool `json:"echo_transcription" env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
+}
+
 type ProvidersConfig struct {
 	Anthropic     ProviderConfig       `json:"anthropic"`
 	OpenAI        OpenAIProviderConfig `json:"openai"`
@@ -562,6 +610,8 @@ type ProvidersConfig struct {
 	Mistral       ProviderConfig       `json:"mistral"`
 	Avian         ProviderConfig       `json:"avian"`
 	Minimax       ProviderConfig       `json:"minimax"`
+	LongCat       ProviderConfig       `json:"longcat"`
+	ModelScope    ProviderConfig       `json:"modelscope"`
 }
 
 // IsEmpty checks if all provider configs are empty (no API keys or API bases set)
@@ -588,7 +638,9 @@ func (p ProvidersConfig) IsEmpty() bool {
 		p.Qwen.APIKey == "" && p.Qwen.APIBase == "" &&
 		p.Mistral.APIKey == "" && p.Mistral.APIBase == "" &&
 		p.Avian.APIKey == "" && p.Avian.APIBase == "" &&
-		p.Minimax.APIKey == "" && p.Minimax.APIBase == ""
+		p.Minimax.APIKey == "" && p.Minimax.APIBase == "" &&
+		p.LongCat.APIKey == "" && p.LongCat.APIBase == "" &&
+		p.ModelScope.APIKey == "" && p.ModelScope.APIBase == ""
 }
 
 // MarshalJSON implements custom JSON marshaling for ProvidersConfig
@@ -678,16 +730,18 @@ type ToolConfig struct {
 }
 
 type BraveConfig struct {
-	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_BRAVE_ENABLED"`
-	APIKey     string `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEY"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_BRAVE_MAX_RESULTS"`
+	Enabled    bool     `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_BRAVE_ENABLED"`
+	APIKey     string   `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEY"`
+	APIKeys    []string `json:"api_keys"    env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEYS"`
+	MaxResults int      `json:"max_results" env:"PICOCLAW_TOOLS_WEB_BRAVE_MAX_RESULTS"`
 }
 
 type TavilyConfig struct {
-	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_TAVILY_ENABLED"`
-	APIKey     string `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_TAVILY_API_KEY"`
-	BaseURL    string `json:"base_url"    env:"PICOCLAW_TOOLS_WEB_TAVILY_BASE_URL"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_TAVILY_MAX_RESULTS"`
+	Enabled    bool     `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_TAVILY_ENABLED"`
+	APIKey     string   `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_TAVILY_API_KEY"`
+	APIKeys    []string `json:"api_keys"    env:"PICOCLAW_TOOLS_WEB_TAVILY_API_KEYS"`
+	BaseURL    string   `json:"base_url"    env:"PICOCLAW_TOOLS_WEB_TAVILY_BASE_URL"`
+	MaxResults int      `json:"max_results" env:"PICOCLAW_TOOLS_WEB_TAVILY_MAX_RESULTS"`
 }
 
 type DuckDuckGoConfig struct {
@@ -696,9 +750,10 @@ type DuckDuckGoConfig struct {
 }
 
 type PerplexityConfig struct {
-	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
-	APIKey     string `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
+	Enabled    bool     `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
+	APIKey     string   `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
+	APIKeys    []string `json:"api_keys"    env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEYS"`
+	MaxResults int      `json:"max_results" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
 }
 
 type SearXNGConfig struct {
@@ -739,6 +794,7 @@ type CronToolsConfig struct {
 type ExecConfig struct {
 	ToolConfig          `         envPrefix:"PICOCLAW_TOOLS_EXEC_"`
 	EnableDenyPatterns  bool     `                                 env:"PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS"  json:"enable_deny_patterns"`
+	AllowRemote         bool     `                                 env:"PICOCLAW_TOOLS_EXEC_ALLOW_REMOTE"          json:"allow_remote"`
 	CustomDenyPatterns  []string `                                 env:"PICOCLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"  json:"custom_deny_patterns"`
 	CustomAllowPatterns []string `                                 env:"PICOCLAW_TOOLS_EXEC_CUSTOM_ALLOW_PATTERNS" json:"custom_allow_patterns"`
 	TimeoutSeconds      int      `                                 env:"PICOCLAW_TOOLS_EXEC_TIMEOUT_SECONDS"       json:"timeout_seconds"` // 0 means use default (60s)
@@ -747,6 +803,7 @@ type ExecConfig struct {
 type SkillsToolsConfig struct {
 	ToolConfig            `                       envPrefix:"PICOCLAW_TOOLS_SKILLS_"`
 	Registries            SkillsRegistriesConfig `                                   json:"registries"`
+	Github                SkillsGithubConfig     `                                   json:"github"`
 	MaxConcurrentSearches int                    `                                   json:"max_concurrent_searches" env:"PICOCLAW_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
 	SearchCache           SearchCacheConfig      `                                   json:"search_cache"`
 }
@@ -794,6 +851,11 @@ type SearchCacheConfig struct {
 
 type SkillsRegistriesConfig struct {
 	ClawHub ClawHubRegistryConfig `json:"clawhub"`
+}
+
+type SkillsGithubConfig struct {
+	Token string `json:"token,omitempty" env:"PICOCLAW_TOOLS_SKILLS_GITHUB_AUTH_TOKEN"`
+	Proxy string `json:"proxy,omitempty" env:"PICOCLAW_TOOLS_SKILLS_GITHUB_PROXY"`
 }
 
 type ClawHubRegistryConfig struct {
@@ -845,7 +907,21 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if passphrase := credential.PassphraseProvider(); passphrase != "" {
+		for _, m := range cfg.ModelList {
+			if m.APIKey != "" && !strings.HasPrefix(m.APIKey, "enc://") && !strings.HasPrefix(m.APIKey, "file://") {
+				fmt.Fprintf(os.Stderr,
+					"picoclaw: warning: model %q has a plaintext api_key; call SaveConfig to encrypt it\n",
+					m.ModelName)
+			}
+		}
+	}
+
 	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+
+	if err := resolveAPIKeys(cfg.ModelList, filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 
@@ -865,6 +941,48 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// encryptPlaintextAPIKeys returns a copy of models with plaintext api_key values
+// encrypted. Returns (nil, nil) when nothing changed (all keys already sealed or
+// empty). Returns (nil, error) if any key fails to encrypt — callers must treat
+// this as a hard failure to prevent a mixed plaintext/ciphertext state on disk.
+// Symmetric counterpart of resolveAPIKeys: both operate purely on []ModelConfig
+// and leave JSON marshaling to the caller.
+func encryptPlaintextAPIKeys(models []ModelConfig, passphrase string) ([]ModelConfig, error) {
+	sealed := make([]ModelConfig, len(models))
+	copy(sealed, models)
+	changed := false
+	for i := range sealed {
+		m := &sealed[i]
+		if m.APIKey == "" || strings.HasPrefix(m.APIKey, "enc://") || strings.HasPrefix(m.APIKey, "file://") {
+			continue
+		}
+		encrypted, err := credential.Encrypt(passphrase, "", m.APIKey)
+		if err != nil {
+			return nil, fmt.Errorf("cannot seal api_key for model %q: %w", m.ModelName, err)
+		}
+		m.APIKey = encrypted
+		changed = true
+	}
+	if !changed {
+		return nil, nil
+	}
+	return sealed, nil
+}
+
+// resolveAPIKeys decrypts or dereferences each api_key in models in-place.
+// Supports plaintext (no-op), file:// (read from configDir), and enc:// (AES-GCM decrypt).
+func resolveAPIKeys(models []ModelConfig, configDir string) error {
+	cr := credential.NewResolver(configDir)
+	for i := range models {
+		resolved, err := cr.Resolve(models[i].APIKey)
+		if err != nil {
+			return fmt.Errorf("model_list[%d] (%s): %w", i, models[i].ModelName, err)
+		}
+		models[i].APIKey = resolved
+	}
+	return nil
+}
+
 func (c *Config) migrateChannelConfigs() {
 	// Discord: mention_only -> group_trigger.mention_only
 	if c.Channels.Discord.MentionOnly && !c.Channels.Discord.GroupTrigger.MentionOnly {
@@ -879,12 +997,22 @@ func (c *Config) migrateChannelConfigs() {
 }
 
 func SaveConfig(path string, cfg *Config) error {
+	if passphrase := credential.PassphraseProvider(); passphrase != "" {
+		sealed, err := encryptPlaintextAPIKeys(cfg.ModelList, passphrase)
+		if err != nil {
+			return err
+		}
+		if sealed != nil {
+			tmp := *cfg
+			tmp.ModelList = sealed
+			cfg = &tmp
+		}
+	}
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-
-	// Use unified atomic write utility with explicit sync for flash storage reliability.
 	return fileutil.WriteFileAtomic(path, data, 0o600)
 }
 
@@ -996,6 +1124,29 @@ func (c *Config) ValidateModelList() error {
 		}
 	}
 	return nil
+}
+
+func MergeAPIKeys(apiKey string, apiKeys []string) []string {
+	seen := make(map[string]struct{})
+	var all []string
+
+	if k := strings.TrimSpace(apiKey); k != "" {
+		if _, exists := seen[k]; !exists {
+			seen[k] = struct{}{}
+			all = append(all, k)
+		}
+	}
+
+	for _, k := range apiKeys {
+		if trimmed := strings.TrimSpace(k); trimmed != "" {
+			if _, exists := seen[trimmed]; !exists {
+				seen[trimmed] = struct{}{}
+				all = append(all, trimmed)
+			}
+		}
+	}
+
+	return all
 }
 
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
