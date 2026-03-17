@@ -711,9 +711,10 @@ type WebhookConfig struct {
 }
 
 type GatewayConfig struct {
-	Host     string                   `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
-	Port     int                      `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
-	Webhooks map[string]WebhookConfig `json:"webhooks,omitempty"`
+	Host      string                   `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
+	Port      int                      `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
+	HotReload bool                     `json:"hot_reload" env:"PICOCLAW_GATEWAY_HOT_RELOAD"`
+	Webhooks  map[string]WebhookConfig `json:"webhooks,omitempty"`
 }
 
 type ToolDiscoveryConfig struct {
