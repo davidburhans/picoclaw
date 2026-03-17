@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -30,6 +31,7 @@ type StatusResponse struct {
 	Status string           `json:"status"`
 	Uptime string           `json:"uptime"`
 	Checks map[string]Check `json:"checks,omitempty"`
+	Pid    int              `json:"pid"`
 }
 
 func NewServer(host string, port int) *Server {
@@ -120,6 +122,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	resp := StatusResponse{
 		Status: "ok",
 		Uptime: uptime.String(),
+		Pid:    os.Getpid(),
 	}
 
 	json.NewEncoder(w).Encode(resp)
