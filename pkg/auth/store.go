@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
 
@@ -45,8 +46,8 @@ func authFilePath() string {
 	if homeDirOverride != "" {
 		return filepath.Join(homeDirOverride, ".picoclaw", "auth.json")
 	}
-	// Priority 2: PICOCLAW_HOME environment variable
-	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
+	// Priority 2: PICOCLAW_HOME environment variable (via config constant)
+	if home := os.Getenv(config.EnvHome); home != "" {
 		return filepath.Join(home, "auth.json")
 	}
 	// Priority 3: User home directory with fallback to HOME env var

@@ -1,6 +1,11 @@
 package session
 
-import "github.com/sipeed/picoclaw/pkg/providers"
+import (
+	"context"
+
+	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/providers"
+)
 
 // SessionStore defines the persistence operations used by the agent loop.
 // Both SessionManager (legacy JSON backend) and JSONLBackend satisfy this
@@ -29,4 +34,8 @@ type SessionStore interface {
 	Save(key string) error
 	// Close releases resources held by the store.
 	Close() error
+	// SetMemoryManager sets the long-term memory manager for the session store.
+	SetMemoryManager(mm *memory.Manager, workspaceID string)
+	// Rotate rotates/refreshes the session state.
+	Rotate(ctx context.Context, key string) error
 }
