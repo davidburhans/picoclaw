@@ -49,6 +49,7 @@ type AgentLoop struct {
 	cmdRegistry    *commands.Registry
 	mcp            mcpRuntime
 	mu             sync.RWMutex
+	reloadFunc     func() error
 	// Track active requests for safe provider cleanup
 	activeRequests sync.WaitGroup
 }
@@ -496,6 +497,11 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 // SetTranscriber injects a voice transcriber for agent-level audio transcription.
 func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 	al.transcriber = t
+}
+
+// SetReloadFunc sets the callback function for triggering config reload.
+func (al *AgentLoop) SetReloadFunc(fn func() error) {
+	al.reloadFunc = fn
 }
 
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
@@ -1930,6 +1936,12 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return nil
 		},
+	}
+	rt.ReloadConfig = func() error {
+		if al.reloadFunc == nil {
+			return fmt.Errorf("reload not configured")
+		}
+		return al.reloadFunc()
 	}
 	if agent != nil {
 		rt.GetModelInfo = func() (string, string) {
