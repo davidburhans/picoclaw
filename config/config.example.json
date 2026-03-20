@@ -84,7 +84,10 @@
       "proxy": "",
       "allow_from": ["YOUR_USER_ID"],
       "use_markdown_v2": false,
-      "reasoning_channel_id": ""
+      "reasoning_channel_id": "",
+      "streaming": {
+        "enabled": true
+      }
     },
     "discord": {
       "enabled": false,
