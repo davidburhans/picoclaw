@@ -19,4 +19,5 @@ type Runtime struct {
 	SwitchChannel      func(value string) error
 	RotateSession      func(ctx context.Context, sessionKey string) error
 	ClearHistory       func() error
+	ReloadConfig       func() error
 }

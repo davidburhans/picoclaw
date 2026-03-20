@@ -2,18 +2,12 @@ package gateway
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,7 +37,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/voice"
@@ -62,6 +55,8 @@ type services struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
+	manualReloadChan chan struct{}
+	reloading        atomic.Bool
 }
 
 type startupBlockedProvider struct {
@@ -125,6 +120,25 @@ func Run(debug bool, configPath string, allowEmptyStartup bool) error {
 		return err
 	}
 
+	// Setup manual reload channel for /reload endpoint
+	manualReloadChan := make(chan struct{}, 1)
+	runningServices.manualReloadChan = manualReloadChan
+	reloadTrigger := func() error {
+		if !runningServices.reloading.CompareAndSwap(false, true) {
+			return fmt.Errorf("reload already in progress")
+		}
+		select {
+		case manualReloadChan <- struct{}{}:
+			return nil
+		default:
+			// Should not happen, but reset flag if channel is full
+			runningServices.reloading.Store(false)
+			return fmt.Errorf("reload already queued")
+		}
+	}
+	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
+	agentLoop.SetReloadFunc(reloadTrigger)
+
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
 
@@ -151,12 +165,48 @@ func Run(debug bool, configPath string, allowEmptyStartup bool) error {
 			shutdownGateway(runningServices, agentLoop, provider, true)
 			return nil
 		case newCfg := <-configReloadChan:
-			err := handleConfigReload(ctx, agentLoop, newCfg, &provider, runningServices, msgBus, allowEmptyStartup)
+			if !runningServices.reloading.CompareAndSwap(false, true) {
+				logger.Warn("Config reload skipped: another reload is in progress")
+				continue
+			}
+			err := executeReload(ctx, agentLoop, newCfg, &provider, runningServices, msgBus, allowEmptyStartup)
 			if err != nil {
 				logger.Errorf("Config reload failed: %v", err)
 			}
+		case <-manualReloadChan:
+			logger.Info("Manual reload triggered via /reload endpoint")
+			newCfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				logger.Errorf("Error loading config for manual reload: %v", err)
+				runningServices.reloading.Store(false)
+				continue
+			}
+			if err = newCfg.ValidateModelList(); err != nil {
+				logger.Errorf("Config validation failed: %v", err)
+				runningServices.reloading.Store(false)
+				continue
+			}
+			err = executeReload(ctx, agentLoop, newCfg, &provider, runningServices, msgBus, allowEmptyStartup)
+			if err != nil {
+				logger.Errorf("Manual reload failed: %v", err)
+			} else {
+				logger.Info("Manual reload completed successfully")
+			}
 		}
 	}
+}
+
+func executeReload(
+	ctx context.Context,
+	agentLoop *agent.AgentLoop,
+	newCfg *config.Config,
+	provider *providers.LLMProvider,
+	runningServices *services,
+	msgBus *bus.MessageBus,
+	allowEmptyStartup bool,
+) error {
+	defer runningServices.reloading.Store(false)
+	return handleConfigReload(ctx, agentLoop, newCfg, provider, runningServices, msgBus, allowEmptyStartup)
 }
 
 func createStartupProvider(
@@ -253,13 +303,11 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
 
-	runningServices.HealthServer.RegisterHandler("/webhook/", webhookHandler(agentLoop, cfg))
-	go func() {
-		if err := runningServices.HealthServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.ErrorCF("health", "Health server error", map[string]any{"error": err.Error()})
-		}
-	}()
-	fmt.Printf("✓ Health endpoints available at http://%s:%d/health and /ready\n", cfg.Gateway.Host, cfg.Gateway.Port)
+	fmt.Printf(
+		"✓ Health endpoints available at http://%s:%d/health, /ready and /reload (POST)\n",
+		cfg.Gateway.Host,
+		cfg.Gateway.Port,
+	)
 
 	stateManager := state.NewManager(cfg.WorkspacePath())
 	runningServices.DeviceService = devices.NewService(devices.Config{
@@ -276,11 +324,12 @@ func setupAndStartServices(
 	return runningServices, nil
 }
 
-func stopAndCleanupServices(runningServices *services, shutdownTimeout time.Duration) {
+func stopAndCleanupServices(runningServices *services, shutdownTimeout time.Duration, isReload bool) {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
-	if runningServices.ChannelManager != nil {
+	// reload should not stop channel manager
+	if !isReload && runningServices.ChannelManager != nil {
 		runningServices.ChannelManager.StopAll(shutdownCtx)
 	}
 	if runningServices.DeviceService != nil {
@@ -309,7 +358,7 @@ func shutdownGateway(
 		cp.Close()
 	}
 
-	stopAndCleanupServices(runningServices, gracefulShutdownTimeout)
+	stopAndCleanupServices(runningServices, gracefulShutdownTimeout, false)
 
 	agentLoop.Stop()
 	agentLoop.Close()
@@ -336,7 +385,7 @@ func handleConfigReload(
 	logger.Infof(" New model is '%s', recreating provider...", newModel)
 
 	logger.Info("  Stopping all services...")
-	stopAndCleanupServices(runningServices, serviceShutdownTimeout)
+	stopAndCleanupServices(runningServices, serviceShutdownTimeout, true)
 
 	newProvider, newModelID, err := createStartupProvider(newCfg, allowEmptyStartup)
 	if err != nil {
@@ -440,17 +489,16 @@ func restartServices(
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
-	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
+	// Reuse existing HealthServer to preserve reloadFunc
+	if runningServices.HealthServer == nil {
+		runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
+	}
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
-		return fmt.Errorf("error restarting channels: %w", err)
+	if err = runningServices.ChannelManager.Reload(context.Background(), cfg); err != nil {
+		return fmt.Errorf("error reload channels: %w", err)
 	}
-	fmt.Printf(
-		"  ✓ Channels restarted, health endpoints at http://%s:%d/health and ready\n",
-		cfg.Gateway.Host,
-		cfg.Gateway.Port,
-	)
+	fmt.Println("  ✓ Channels restarted.")
 
 	stateManager := state.NewManager(cfg.WorkspacePath())
 	runningServices.DeviceService = devices.NewService(devices.Config{
@@ -604,91 +652,5 @@ func createHeartbeatHandler(agentLoop *agent.AgentLoop) func(prompt, channel, ch
 			return tools.SilentResult("Heartbeat OK")
 		}
 		return tools.SilentResult(response)
-	}
-}
-
-type WebhookProcessor interface {
-	ProcessDirectWithChannel(ctx context.Context, content, sessionKey, channel, chatID string) (string, error)
-}
-
-func webhookHandler(processor WebhookProcessor, cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(pathParts) != 2 || pathParts[0] != "webhook" {
-			http.Error(w, "Not found", http.StatusNotFound)
-			return
-		}
-		webhookID := pathParts[1]
-
-		webhook, ok := cfg.Gateway.Webhooks[webhookID]
-		if !ok {
-			http.Error(w, "Webhook not found", http.StatusNotFound)
-			return
-		}
-
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Error reading body", http.StatusInternalServerError)
-			return
-		}
-
-		if webhook.Format == "github" {
-			sigHeader := r.Header.Get("X-Hub-Signature-256")
-			if sigHeader == "" {
-				http.Error(w, "Missing signature", http.StatusUnauthorized)
-				return
-			}
-			parts := strings.SplitN(sigHeader, "=", 2)
-			if len(parts) != 2 || parts[0] != "sha256" {
-				http.Error(w, "Invalid signature format", http.StatusBadRequest)
-				return
-			}
-			mac := hmac.New(sha256.New, []byte(webhook.Secret))
-			mac.Write(body)
-			expectedMAC := hex.EncodeToString(mac.Sum(nil))
-			if !hmac.Equal([]byte(parts[1]), []byte(expectedMAC)) {
-				http.Error(w, "Invalid signature", http.StatusUnauthorized)
-				return
-			}
-		}
-
-		var payloadStr string
-		if webhook.Format == "github" {
-			event := r.Header.Get("X-GitHub-Event")
-			payloadStr = fmt.Sprintf("GitHub Webhook Event: %s\nPayload: %s", event, string(body))
-		} else {
-			payloadStr = fmt.Sprintf("Webhook Event: %s", string(body))
-		}
-
-		agentID := webhook.Agent
-		if agentID == "" {
-			agentID = "default"
-		}
-
-		sessionKeyParams := routing.SessionKeyParams{
-			AgentID: agentID,
-			Channel: "webhook",
-			Peer: &routing.RoutePeer{
-				Kind: "direct",
-				ID:   webhookID,
-			},
-			DMScope: routing.DMScopePerChannelPeer,
-		}
-		sessionKey := routing.BuildAgentPeerSessionKey(sessionKeyParams)
-
-		_, err = processor.ProcessDirectWithChannel(r.Context(), payloadStr, sessionKey, "webhook", webhookID)
-		if err != nil {
-			logger.ErrorCF("webhook", "Error processing webhook", map[string]any{"error": err.Error(), "webhookID": webhookID})
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
 	}
 }
