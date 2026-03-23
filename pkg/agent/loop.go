@@ -3139,6 +3139,12 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return nil
 		},
+		RotateSession: func(ctx context.Context, sessionKey string) error {
+			if agent.Sessions == nil {
+				return fmt.Errorf("sessions not initialized for agent")
+			}
+			return agent.Sessions.Rotate(ctx, sessionKey)
+		},
 	}
 	rt.ReloadConfig = func() error {
 		if al.reloadFunc == nil {

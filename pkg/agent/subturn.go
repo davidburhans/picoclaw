@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
@@ -603,6 +604,8 @@ type ephemeralSessionStoreIface interface {
 	TruncateHistory(key string, keepLast int)
 	Save(key string) error
 	Close() error
+	SetMemoryManager(mm *memory.Manager, workspaceID string)
+	Rotate(ctx context.Context, key string) error
 }
 
 func (e *ephemeralSessionStore) AddMessage(_, role, content string) {
@@ -663,6 +666,9 @@ func (e *ephemeralSessionStore) TruncateHistory(_ string, keepLast int) {
 
 func (e *ephemeralSessionStore) Save(_ string) error { return nil }
 func (e *ephemeralSessionStore) Close() error        { return nil }
+
+func (e *ephemeralSessionStore) SetMemoryManager(_ *memory.Manager, _ string) {}
+func (e *ephemeralSessionStore) Rotate(_ context.Context, _ string) error     { return nil }
 
 func (e *ephemeralSessionStore) truncateLocked() {
 	if len(e.history) > maxEphemeralHistorySize {

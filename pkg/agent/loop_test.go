@@ -674,11 +674,11 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		Content:  "/new",
 		Peer:     baseMsg.Peer,
 	})
-	if newResp != "LLM reply" {
+	if newResp != "Started a new session." {
 		t.Fatalf("unexpected /new reply: %q", newResp)
 	}
-	if provider.calls != 2 {
-		t.Fatalf("LLM should be called for passthrough /new command, calls=%d", provider.calls)
+	if provider.calls != 1 {
+		t.Fatalf("LLM should not be called for handled /new command, calls=%d", provider.calls)
 	}
 }
 
