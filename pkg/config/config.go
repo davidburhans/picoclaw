@@ -202,15 +202,15 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID          string            `json:"id"`
-	Default     bool              `json:"default,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	Workspace   string            `json:"workspace,omitempty"`
-	Model       *AgentModelConfig `json:"model,omitempty"`
-	Skills      []string          `json:"skills,omitempty"`
-	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
-	SafetyLevel string            `json:"safety_level,omitempty"`
-	BirthYear   int               `json:"birth_year,omitempty"`
+	ID            string            `json:"id"`
+	Default       bool              `json:"default,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	Workspace     string            `json:"workspace,omitempty"`
+	Model         *AgentModelConfig `json:"model,omitempty"`
+	Skills        []string          `json:"skills,omitempty"`
+	Subagents     *SubagentsConfig  `json:"subagents,omitempty"`
+	SafetyLevel   string            `json:"safety_level,omitempty"`
+	BirthYear     int               `json:"birth_year,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -262,6 +262,28 @@ type SubTurnConfig struct {
 	ConcurrencyTimeoutSec int `json:"concurrency_timeout_sec" env:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_CONCURRENCY_TIMEOUT_SEC"`
 }
 
+// ScheduleConfig for time-based model switching
+type ScheduleConfig struct {
+	Timezone string         `json:"timezone"`
+	Default  ScheduleRule   `json:"default"`
+	Rules    []ScheduleRule `json:"rules"`
+}
+
+type ScheduleRule struct {
+	Days     []string       `json:"days,omitempty"`
+	Hours    *ScheduleHours `json:"hours,omitempty"`
+	Provider string         `json:"provider"`
+	Model    string         `json:"model,omitempty"`
+}
+
+type ScheduleHours struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+// ToolFeedbackConfig controls whether tool execution details are sent to the
+// chat channel as real-time feedback messages. When enabled, every tool call
+// produces a short notification with the tool name and its parameters.
 type ToolFeedbackConfig struct {
 	Enabled       bool `json:"enabled"         env:"PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_ENABLED"`
 	MaxArgsLength int  `json:"max_args_length" env:"PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH"`
@@ -272,6 +294,7 @@ type AgentDefaults struct {
 	RestrictToWorkspace       bool               `json:"restrict_to_workspace"           env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	AllowReadOutsideWorkspace bool               `json:"allow_read_outside_workspace"    env:"PICOCLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
 	Provider                  string             `json:"provider"                        env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
+	Schedule                  *ScheduleConfig    `json:"schedule,omitempty"`
 	ModelName                 string             `json:"model_name"                      env:"PICOCLAW_AGENTS_DEFAULTS_MODEL_NAME"`
 	Model                     string             `json:"model,omitempty"                 env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"` // Deprecated: use model_name instead
 	ModelFallbacks            []string           `json:"model_fallbacks,omitempty"`
@@ -289,8 +312,8 @@ type AgentDefaults struct {
 	SubTurn                   SubTurnConfig      `json:"subturn"                                                                                     envPrefix:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_"`
 	ToolFeedback              ToolFeedbackConfig `json:"tool_feedback,omitempty"`
 	LogLevel                  string             `json:"log_level,omitempty"             env:"PICOCLAW_LOG_LEVEL"`
-	SafetyLevel               string             `json:"safety_level"                    env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
-	BirthYear                 int                `json:"birth_year"                      env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
+	SafetyLevel               string             `json:"safety_level,omitempty"          env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
+	BirthYear                 int                `json:"birth_year,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
 }
 
 const (
@@ -764,6 +787,12 @@ type GatewayConfig struct {
 	Host      string `json:"host"       env:"PICOCLAW_GATEWAY_HOST"`
 	Port      int    `json:"port"       env:"PICOCLAW_GATEWAY_PORT"`
 	HotReload bool   `json:"hot_reload" env:"PICOCLAW_GATEWAY_HOT_RELOAD"`
+}
+
+type WebhookConfig struct {
+	Secret string `json:"secret"`
+	Agent  string `json:"agent"`
+	Format string `json:"format"` // e.g. "github", "json"
 }
 
 type ToolDiscoveryConfig struct {
