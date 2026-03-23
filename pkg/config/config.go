@@ -89,6 +89,7 @@ type Config struct {
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
 	Voice     VoiceConfig     `json:"voice"`
+	Memory    MemoryConfig    `json:"memory"`
 	// BuildInfo contains build-time version information
 	BuildInfo BuildInfo `json:"build_info,omitempty"`
 }
@@ -201,13 +202,15 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID        string            `json:"id"`
-	Default   bool              `json:"default,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Workspace string            `json:"workspace,omitempty"`
-	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills    []string          `json:"skills,omitempty"`
-	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	ID          string            `json:"id"`
+	Default     bool              `json:"default,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Workspace   string            `json:"workspace,omitempty"`
+	Model       *AgentModelConfig `json:"model,omitempty"`
+	Skills      []string          `json:"skills,omitempty"`
+	Subagents   *SubagentsConfig  `json:"subagents,omitempty"`
+	SafetyLevel string            `json:"safety_level,omitempty"`
+	BirthYear   int               `json:"birth_year,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -286,6 +289,8 @@ type AgentDefaults struct {
 	SubTurn                   SubTurnConfig      `json:"subturn"                                                                                     envPrefix:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_"`
 	ToolFeedback              ToolFeedbackConfig `json:"tool_feedback,omitempty"`
 	LogLevel                  string             `json:"log_level,omitempty"             env:"PICOCLAW_LOG_LEVEL"`
+	SafetyLevel               string             `json:"safety_level"                    env:"PICOCLAW_AGENTS_DEFAULTS_SAFETY_LEVEL"`
+	BirthYear                 int                `json:"birth_year"                      env:"PICOCLAW_AGENTS_DEFAULTS_BIRTH_YEAR"`
 }
 
 const (
@@ -608,6 +613,29 @@ type VoiceConfig struct {
 	EchoTranscription bool   `json:"echo_transcription"   env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
 }
 
+type MemoryConfig struct {
+	Enabled   bool            `json:"enabled"   env:"PICOCLAW_MEMORY_ENABLED"`
+	Qdrant    QdrantConfig    `json:"qdrant"    json:"qdrant"`
+	Embedding EmbeddingConfig `json:"embedding" json:"embedding"`
+}
+
+type QdrantConfig struct {
+	Address        string `json:"address"         env:"PICOCLAW_MEMORY_QDRANT_ADDRESS"`
+	APIKey         string `json:"api_key"         env:"PICOCLAW_MEMORY_QDRANT_API_KEY"`
+	CollectionName string `json:"collection_name" env:"PICOCLAW_MEMORY_QDRANT_COLLECTION_NAME"`
+}
+
+type EmbeddingConfig struct {
+	Provider  string `json:"provider"   env:"PICOCLAW_MEMORY_EMBEDDING_PROVIDER"`
+	Model     string `json:"model"      env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`
+	APIKey    string `json:"api_key"    env:"PICOCLAW_MEMORY_EMBEDDING_API_KEY"`
+	BaseURL   string `json:"base_url"   env:"PICOCLAW_MEMORY_EMBEDDING_BASE_URL"`
+	Timeout   int    `json:"timeout"    env:"PICOCLAW_MEMORY_EMBEDDING_TIMEOUT"`
+	ChunkSize int    `json:"chunk_size" env:"PICOCLAW_MEMORY_EMBEDDING_CHUNK_SIZE"`
+	KeepAlive string `json:"keep_alive" env:"PICOCLAW_MEMORY_EMBEDDING_KEEP_ALIVE"`
+	NumCtx    int    `json:"num_ctx"    env:"PICOCLAW_MEMORY_EMBEDDING_NUM_CTX"`
+}
+
 type ProvidersConfig struct {
 	Anthropic     ProviderConfig       `json:"anthropic"`
 	OpenAI        OpenAIProviderConfig `json:"openai"`
@@ -873,6 +901,8 @@ type ToolsConfig struct {
 	Subagent        ToolConfig         `json:"subagent"                                                 envPrefix:"PICOCLAW_TOOLS_SUBAGENT_"`
 	WebFetch        ToolConfig         `json:"web_fetch"                                                envPrefix:"PICOCLAW_TOOLS_WEB_FETCH_"`
 	WriteFile       ToolConfig         `json:"write_file"                                               envPrefix:"PICOCLAW_TOOLS_WRITE_FILE_"`
+	MemorySearch    ToolConfig         `json:"memory_search"                                            envPrefix:"PICOCLAW_TOOLS_MEMORY_SEARCH_"`
+	MemoryBrowse    ToolConfig         `json:"memory_browse"                                            envPrefix:"PICOCLAW_TOOLS_MEMORY_BROWSE_"`
 }
 
 type SearchCacheConfig struct {
@@ -1364,6 +1394,10 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.WriteFile.Enabled
 	case "mcp":
 		return t.MCP.Enabled
+	case "memory_search":
+		return t.MemorySearch.Enabled
+	case "memory_browse":
+		return t.MemoryBrowse.Enabled
 	default:
 		return true
 	}

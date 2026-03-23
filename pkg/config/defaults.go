@@ -41,6 +41,8 @@ func DefaultConfig() *Config {
 					Enabled:       true,
 					MaxArgsLength: 300,
 				},
+				SafetyLevel: "relaxed",
+				BirthYear:   0,
 			},
 		},
 		Bindings: []AgentBinding{},
@@ -566,6 +568,12 @@ func DefaultConfig() *Config {
 			WriteFile: ToolConfig{
 				Enabled: true,
 			},
+			MemorySearch: ToolConfig{
+				Enabled: true,
+			},
+			MemoryBrowse: ToolConfig{
+				Enabled: true,
+			},
 		},
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,
@@ -578,6 +586,19 @@ func DefaultConfig() *Config {
 		Voice: VoiceConfig{
 			ModelName:         "",
 			EchoTranscription: false,
+		},
+		Memory: MemoryConfig{
+			Enabled: false,
+			Qdrant: QdrantConfig{
+				Address:        "http://localhost:6334",
+				CollectionName: "picoclaw",
+			},
+			Embedding: EmbeddingConfig{
+				Provider:  "openai",
+				Model:     "text-embedding-3-small",
+				ChunkSize: 4096,
+				Timeout:   30,
+			},
 		},
 		BuildInfo: BuildInfo{
 			Version:   Version,
