@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
@@ -39,23 +40,12 @@ func (c *AuthCredential) NeedsRefresh() bool {
 	return time.Now().Add(5 * time.Minute).After(c.ExpiresAt)
 }
 
-var homeDirOverride = ""
-
 func authFilePath() string {
-	// Priority 1: Test override (for development/testing)
-	if homeDirOverride != "" {
-		return filepath.Join(homeDirOverride, ".picoclaw", "auth.json")
-	}
-	// Priority 2: PICOCLAW_HOME environment variable (via config constant)
 	if home := os.Getenv(config.EnvHome); home != "" {
 		return filepath.Join(home, "auth.json")
 	}
-	// Priority 3: User home directory with fallback to HOME env var
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.Getenv("HOME")
-	}
-	return filepath.Join(home, ".picoclaw", "auth.json")
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, pkg.DefaultPicoClawHome, "auth.json")
 }
 
 func LoadStore() (*AuthStore, error) {
